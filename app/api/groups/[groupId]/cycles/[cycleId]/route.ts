@@ -6,12 +6,17 @@ import { GroupMember } from '@/lib/db/models/GroupMember';
 import { PaymentCycle } from '@/lib/db/models/PaymentCycle';
 import { User } from '@/lib/db/models/User';
 
-interface Params {
-  params: { id: string; cycleId: string };
+// 1. Update Interface: Params must be a Promise in Next.js 15+
+// Also changed 'id' to 'groupId' to match your folder structure [groupId]
+interface RouteContext {
+  params: Promise<{ groupId: string; cycleId: string }>;
 }
 
-export async function POST(request: NextRequest, { params }: Params) {
+export async function POST(request: NextRequest, context: RouteContext) {
   try {
+    // 2. Await the params before using them
+    const { groupId, cycleId } = await context.params;
+
     const session = await getServerSession();
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -23,8 +28,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-
-    const { id: groupId, cycleId } = params;
 
     // Check if user is leader of this group
     const group = await Group.findById(groupId);
