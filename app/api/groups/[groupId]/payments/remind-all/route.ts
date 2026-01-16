@@ -8,12 +8,16 @@ import { PaymentCycle } from '@/lib/db/models/PaymentCycle';
 import { User } from '@/lib/db/models/User';
 import { sendNotification, sendPaymentReminders } from '@/lib/utils/notifications';
 
-interface Params {
-  params: { groupId: string };
+// 1. UPDATE INTERFACE: Params must be a Promise in Next.js 16
+interface RouteContext {
+  params: Promise<{ groupId: string }>;
 }
 
-export async function POST(request: NextRequest, { params }: Params) {
+export async function POST(request: NextRequest, context: RouteContext) {
   try {
+    // 2. AWAIT params before using
+    const { groupId } = await context.params;
+
     const session = await getServerSession();
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -26,8 +30,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const { groupId } = params;
-    
     // Check if user is leader or sub-leader of this group
     const groupMember = await GroupMember.findOne({ 
       groupId, 
@@ -65,7 +67,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       if (payment.userId) {
         return sendNotification({
           userId: payment.userId._id.toString(),
-          type: 'reminder' as any, // Use type assertion to fix TypeScript error
+          type: 'reminder' as any,
           title: 'Payment Reminder',
           message: `Leader ${user.name} reminded you: Payment of ₹${payment.amount} is due for cycle ${currentCycle.cycleNumber} in "${group.name}"`,
           groupId,
@@ -97,10 +99,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 }
 
-// ✅ NEW: API endpoint to trigger automatic reminders (for cron jobs)
+// GET endpoint remains the same (no params used)
 export async function GET(request: NextRequest) {
   try {
-    // You can add an API key check here for security
     const authHeader = request.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
     
