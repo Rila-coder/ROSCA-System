@@ -7,12 +7,16 @@ import { Payment } from '@/lib/db/models/Payment';
 import { PaymentCycle } from '@/lib/db/models/PaymentCycle';
 import { User } from '@/lib/db/models/User';
 
-interface Params {
-  params: { id: string };
+// 1. UPDATE INTERFACE: Params is a Promise, and the key is 'groupId' (matching folder [groupId])
+interface RouteContext {
+  params: Promise<{ groupId: string }>;
 }
 
-export async function GET(request: NextRequest, { params }: Params) {
+export async function GET(request: NextRequest, context: RouteContext) {
   try {
+    // 2. AWAIT params before using
+    const { groupId } = await context.params;
+
     const session = await getServerSession();
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -25,8 +29,6 @@ export async function GET(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const groupId = params.id;
-    
     // Check if user is a member of this group
     const isMember = await GroupMember.findOne({ 
       groupId: groupId, 
