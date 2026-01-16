@@ -4,11 +4,16 @@ import connectDB from '@/lib/db/connect';
 import { Payment } from '@/lib/db/models/Payment';
 import { User } from '@/lib/db/models/User';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { groupId: string } }
-) {
+// 1. UPDATE INTERFACE: Params must be a Promise
+interface RouteContext {
+  params: Promise<{ groupId: string }>;
+}
+
+export async function GET(request: NextRequest, context: RouteContext) {
   try {
+    // 2. AWAIT params before using
+    const { groupId } = await context.params;
+
     const session = await getServerSession();
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -21,8 +26,6 @@ export async function GET(
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const { groupId } = params;
-    
     // Get recent payments (last 10)
     const recentPayments = await Payment.find({ groupId })
       .populate('userId', 'name email avatar')
@@ -31,7 +34,7 @@ export async function GET(
       .lean();
 
     // Format payments
-    const formattedPayments = recentPayments.map(payment => ({
+    const formattedPayments = recentPayments.map((payment: any) => ({
       _id: payment._id?.toString() || '',
       memberName: payment.userId?.name || 'Unknown',
       amount: payment.amount,
