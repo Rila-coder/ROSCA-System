@@ -1,4 +1,4 @@
-import { COLORS } from '@/lib/constants';
+import { COLORS } from '@/lib/constants/colors';
 
 export const generatePDF = (data: any, type: 'group' | 'general', groupName?: string) => {
   // Placeholder for PDF generation logic
