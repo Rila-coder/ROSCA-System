@@ -463,7 +463,8 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
 
     const creatorEmail = user.email || "";
     const creatorName = user.name || "You";
-    const creatorPhone = user.phone || user.mobile || "";
+    // ✅ FIX: Removed user.mobile which caused the build error
+    const creatorPhone = user.phone || "";
 
     // Check if creator is already added - more thorough check
     const isAlreadyAdded = members.some(member => 
