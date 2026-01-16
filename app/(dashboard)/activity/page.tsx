@@ -2,6 +2,10 @@ import ActivityLog from '@/components/activity/ActivityLog';
 import { getServerSession } from '@/lib/utils/auth';
 import { redirect } from 'next/navigation';
 
+// ✅ FIX: This tells Next.js to render this page on the server for every request.
+// This fixes the "Dynamic server usage" error caused by reading cookies.
+export const dynamic = 'force-dynamic';
+
 export const metadata = {
   title: 'Activity Log | ROSCA',
   description: 'View recent activities in your groups',
