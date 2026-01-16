@@ -6,17 +6,11 @@ import { GroupMember } from '@/lib/db/models/GroupMember';
 import { PaymentCycle } from '@/lib/db/models/PaymentCycle';
 import { User } from '@/lib/db/models/User';
 
-type RouteContext = {
-  params: Promise<{
-    groupId: string;
-    cycleId: string;
-  }>;
-};
+interface Params {
+  params: { id: string; cycleId: string };
+}
 
-export async function POST(
-  request: NextRequest,
-  context: RouteContext
-) {
+export async function POST(request: NextRequest, { params }: Params) {
   try {
     const session = await getServerSession();
     if (!session?.user?.email) {
@@ -24,14 +18,13 @@ export async function POST(
     }
 
     await connectDB();
-
+    
     const user = await User.findOne({ email: session.user.email });
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // ✅ FIX: await params & correct names
-    const { groupId, cycleId } = await context.params;
+    const { id: groupId, cycleId } = params;
 
     // Check if user is leader of this group
     const group = await Group.findById(groupId);
@@ -40,18 +33,15 @@ export async function POST(
     }
 
     if (!group.leaderId.equals(user._id)) {
-      return NextResponse.json(
-        { error: 'Only leader can complete cycles' },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: 'Only leader can complete cycles' }, { status: 403 });
     }
 
     // Update cycle
     const updatedCycle = await PaymentCycle.findByIdAndUpdate(
       cycleId,
-      {
+      { 
         isCompleted: true,
-        completedAt: new Date(),
+        completedAt: new Date()
       },
       { new: true }
     ).populate('recipientId', 'name email avatar');
@@ -64,21 +54,20 @@ export async function POST(
     await GroupMember.findOneAndUpdate(
       {
         groupId: groupId,
-        userId: updatedCycle.recipientId._id,
+        userId: updatedCycle.recipientId._id
       },
       {
         hasReceived: true,
         receivedCycle: updatedCycle.cycleNumber,
         receivedAt: new Date(),
-        totalReceived:
-          (group.contributionAmount || 0) * (group.memberCount || 0),
+        totalReceived: (group.contributionAmount || 0) * (group.memberCount || 0)
       }
     );
 
-    return NextResponse.json({
-      success: true,
+    return NextResponse.json({ 
+      success: true, 
       cycle: updatedCycle,
-      message: 'Cycle completed successfully',
+      message: 'Cycle completed successfully' 
     });
   } catch (error) {
     console.error('Error completing cycle:', error);
