@@ -9,13 +9,6 @@ import { User } from '@/lib/db/models/User';
 import { sendNotification, sendNotificationToAllMembers, notifyNewCycleStarted, notifyCycleCompleted } from '@/lib/utils/notifications';
 import { NotificationType } from '@/types/notification';
 
-
-/* ======================================================================
-   POST: Start a new cycle (Respecting Draw Numbers)
-   SECURITY: ONLY LEADER
-====================================================================== */
-// ... (imports remain the same) ...
-
 /* ======================================================================
    POST: Start a new cycle (Respecting Draw Numbers & Snapshot Names)
    SECURITY: ONLY LEADER
@@ -102,7 +95,7 @@ export async function POST(
       amount: group.contributionAmount * totalMembers,
       dueDate: data.dueDate || new Date(),
       recipientId: recipientUserId,
-      recipientName: recipientName, // ✅ This will now be "Asma SK" instead of "Asma"
+      recipientName: recipientName,
       status: initialStatus,
       isCompleted: false,
       isSkipped: false,
@@ -151,11 +144,7 @@ export async function POST(
 }
 
 /* ======================================================================
-   GET: Fetch all payment cycles for a group
-   SECURITY: MEMBERS, SUB-LEADERS, LEADERS
-====================================================================== */
-/* ======================================================================
-   GET: Fetch all payment cycles (With Live Name Updates)
+   GET: Fetch all payment cycles (With Live Name Updates & Group Duration)
 ====================================================================== */
 export async function GET(
   request: NextRequest,
@@ -177,30 +166,35 @@ export async function GET(
     const params = await context.params;
     const groupId = params.groupsId || params.groupId || params.id;
 
+    // 1. Fetch Group details to get Duration
+    const group = await Group.findById(groupId).select('duration targetMemberCount name');
+    if (!group) {
+        return NextResponse.json({ error: 'Group not found' }, { status: 404 });
+    }
+
     // Check membership
     const isMember = await GroupMember.findOne({ groupId, userId: user._id });
     if (!isMember) {
       return NextResponse.json({ error: 'Not a member' }, { status: 403 });
     }
 
-    // 1. Fetch Raw Cycles
+    // 2. Fetch Raw Cycles
     const cycles = await PaymentCycle.find({ groupId })
       .populate('recipientId', 'name email avatar') // This gets Global User Profile
       .sort('cycleNumber')
       .lean(); // Convert to plain JS objects so we can edit them
 
-    // 2. Fetch Latest Group Member Data (The Snapshots)
+    // 3. Fetch Latest Group Member Data (The Snapshots)
     // We need this to get the "Edited Name" (e.g. "Asma SK") instead of Global Name ("Asma")
     const groupMembers = await GroupMember.find({ groupId }).select('userId name memberNumber');
 
-    // 3. Map Live Names to Cycles
+    // 4. Map Live Names to Cycles
     // We update the cycle's recipientName with the fresh data from GroupMembers
     const cyclesWithLiveNames = cycles.map((cycle: any) => {
       let liveName = cycle.recipientName; // Default to stored name
       
       if (cycle.recipientId && cycle.recipientId._id) {
         // CASE A: Registered User
-        // Find the GroupMember record that matches this User ID
         const memberRecord = groupMembers.find(
             m => m.userId && m.userId.toString() === cycle.recipientId._id.toString()
         );
@@ -209,8 +203,6 @@ export async function GET(
         }
       } else {
         // CASE B: Guest / Unregistered
-        // Try to match by "Member Number" if we can't match by ID
-        // (Since guests don't have a stable UserID link in the cycle, we assume draw order matches)
         const memberRecord = groupMembers.find(m => m.memberNumber === cycle.cycleNumber);
         if (memberRecord && memberRecord.name) {
              liveName = memberRecord.name;
@@ -223,7 +215,11 @@ export async function GET(
       };
     });
 
-    return NextResponse.json({ cycles: cyclesWithLiveNames });
+    // ✅ RETURN cycles AND totalDuration (used to hide start button when finished)
+    return NextResponse.json({ 
+        cycles: cyclesWithLiveNames,
+        totalDuration: group.duration || group.targetMemberCount || 0
+    });
 
   } catch (error: any) {
     console.error('GET cycles error:', error);
@@ -232,7 +228,7 @@ export async function GET(
 }
 
 /* ======================================================================
-   PUT: Complete or Skip Cycle (Gemini's improved version)
+   PUT: Complete or Skip Cycle
    SECURITY: ONLY LEADER
 ====================================================================== */
 export async function PUT(
@@ -317,8 +313,24 @@ export async function PUT(
         updatedAt: new Date(),
       });
 
-      // ✅ Notify Complete
+      // ✅ Notify Cycle Complete
       await notifyCycleCompleted(cycle);
+
+      // ✅ NEW: CHECK IF THIS WAS THE LAST CYCLE
+      const totalCycles = group.duration || group.targetMemberCount || 0;
+      if (cycle.cycleNumber >= totalCycles) {
+        // Mark group as completed (optional, based on your group schema status enums)
+        // await Group.findByIdAndUpdate(group._id, { status: 'completed' }); 
+
+        // Send "All Cycles Completed" Notification
+        await sendNotificationToAllMembers({
+            groupId: group._id,
+            type: NotificationType.GROUP,
+            title: '🎉 Group Completed!',
+            message: `Congratulations! Total cycles for "${group.name}" have been completed successfully.`,
+            priority: 'high'
+        });
+      }
 
       const completedCycle = await PaymentCycle.findById(cycle._id)
         .populate('recipientId', 'name email avatar phone')
@@ -348,14 +360,12 @@ export async function PUT(
 
       // ✅ Notify Skipped
       try {
-        // Try to import notifyCycleSkipped
         const { notifyCycleSkipped } = await import('@/lib/utils/notifications');
         await notifyCycleSkipped(cycle);
       } catch (e) {
-        // Fallback to generic notification using GROUP type (not PAYMENT)
         await sendNotificationToAllMembers({
           groupId: group._id,
-          type: NotificationType.GROUP, // Changed from 'payment' to NotificationType.GROUP
+          type: NotificationType.GROUP,
           title: 'Cycle Skipped',
           message: `Cycle #${cycle.cycleNumber} has been skipped by the leader.`,
           priority: 'medium'

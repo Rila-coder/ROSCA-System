@@ -13,6 +13,7 @@ import {
   Loader2,
   RefreshCw,
   Zap,
+  Trophy // ✅ Imported Trophy icon for success message
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -32,6 +33,7 @@ export default function CycleManagement({
   members = [] // ✅ FROM GEMINI'S UPDATE: Added members prop with default
 }: CycleManagementProps) {
   const [cycles, setCycles] = useState<any[]>([]);
+  const [groupDuration, setGroupDuration] = useState<number>(0); // ✅ Track max cycles
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<any | null>(null);
@@ -53,6 +55,7 @@ export default function CycleManagement({
 
       const data = await response.json();
       setCycles(data.cycles || []);
+      setGroupDuration(data.totalDuration || 0); // ✅ Capture group total duration
 
       // Select active cycle if available, otherwise first cycle
       const activeCycle = data.cycles.find(
@@ -331,6 +334,7 @@ export default function CycleManagement({
       case "upcoming":
         return "bg-accent/10 text-accent border-accent/20";
       case "skipped":
+
         return "bg-error/10 text-error border-error/20";
     }
   };
@@ -359,7 +363,21 @@ export default function CycleManagement({
     }
   };
 
+  // ✅ CHECK IF ALL CYCLES ARE COMPLETED
+  // We check if the number of actual cycles >= the group's total duration
+  // AND if the last cycle is marked as completed.
+  const isGroupFullyCompleted = () => {
+    if (groupDuration === 0) return false;
+    if (cycles.length < groupDuration) return false;
+    
+    const lastCycle = cycles[cycles.length - 1];
+    return lastCycle && (lastCycle.isCompleted || lastCycle.status === 'completed');
+  };
+
   const shouldShowStartNextCycle = () => {
+    // If fully completed, do not show button
+    if (isGroupFullyCompleted()) return false;
+
     const hasActiveCycle = cycles.some((c) => getCycleStatus(c) === "active");
     const hasUpcomingCycle = cycles.some(
       (c) => getCycleStatus(c) === "upcoming"
@@ -377,6 +395,9 @@ export default function CycleManagement({
   };
 
   const shouldShowStartUpcomingCycle = () => {
+    // If fully completed, do not show button
+    if (isGroupFullyCompleted()) return false;
+
     const hasActiveCycle = cycles.some((c) => getCycleStatus(c) === "active");
     const hasUpcomingCycle = cycles.some(
       (c) => getCycleStatus(c) === "upcoming"
@@ -741,7 +762,27 @@ export default function CycleManagement({
               })}
             </div>
 
-            {/* Bottom "Start Next Cycle" button: Only visible if canManage is true */}
+            {/* ✅ SUCCESS MESSAGE: Replaces buttons when all cycles are done */}
+            {isGroupFullyCompleted() && (
+                <div className="mt-8 mb-4 p-8 bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500">
+                    {/* Background decorations */}
+                    <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
+                    <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
+
+                    <div className="relative z-10 flex flex-col items-center">
+                        <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-md mb-4 animate-bounce">
+                            <Trophy className="text-yellow-500 w-8 h-8" fill="currentColor" />
+                        </div>
+                        <h3 className="text-2xl font-bold text-green-800 mb-2">Group Successfully Completed!</h3>
+                        <p className="text-green-700 max-w-md mx-auto">
+                            All {stats.totalCycles} cycles have been successfully completed and distributed.
+                            Total cycles are completed in this group. So group members cycles and payments are completed.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* Bottom "Start Next Cycle" button: Only visible if canManage is true AND NOT COMPLETED */}
             {canManage && shouldShowStartNextCycle() && cycles.length > 0 && (
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <button
@@ -759,7 +800,7 @@ export default function CycleManagement({
               </div>
             )}
 
-            {/* Bottom "Start Upcoming Cycle" button: Only visible if canManage is true */}
+            {/* Bottom "Start Upcoming Cycle" button: Only visible if canManage is true AND NOT COMPLETED */}
             {canManage && shouldShowStartUpcomingCycle() && cycles.length > 0 && (
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <button
@@ -975,6 +1016,7 @@ export default function CycleManagement({
                 {
                   status: "skipped",
                   label: "Skipped",
+
                   color: "bg-error",
                   text: "text-error",
                   count: stats.skippedCycles,

@@ -302,6 +302,10 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
   // ✅ State to track internal role - with improved detection
   const [userRole, setUserRole] = useState<'leader' | 'sub_leader' | 'member'>('member');
   
+  // ✅ NEW STATE: Track Group Status
+  const [isGroupCompleted, setIsGroupCompleted] = useState(false);
+  const [groupName, setGroupName] = useState('Group');
+  
   const actionsMenuRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
   useEffect(() => {
@@ -389,6 +393,11 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
       const data = await response.json();
       setCurrentCycle(data.currentCycle);
       setPayments(data.payments || []);
+      
+      // ✅ SAVE GROUP INFO
+      if (data.groupName) setGroupName(data.groupName);
+      if (data.isGroupCompleted !== undefined) setIsGroupCompleted(data.isGroupCompleted);
+
     } catch (error) {
       toast.error('Failed to load payment data');
       console.error('Payment data fetch error:', error);
@@ -713,10 +722,9 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
     // Prepare report data
     const activeCycle = getActiveCycleInfo();
     const paymentStats = getPaymentStats();
-    const groupName = "Group"; // You might want to fetch this from API
     
     const reportData = {
-      groupName: groupName,
+      groupName: groupName, // ✅ Use State Group Name
       activeCycle: activeCycle,
       paymentStats: paymentStats,
       payments: filteredPayments.map(payment => ({
@@ -1140,6 +1148,17 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
   };
 
   const getCycleStatusMessage = () => {
+    // ✅ CRITICAL CHECK: If Group is fully completed, return special message
+    if (isGroupCompleted) {
+        return {
+            title: "All Cycles Completed",
+            message: `Total cycles of this ${groupName} group completed.. So no payments track..`,
+            icon: <CheckCircle className="h-16 w-16 text-success" />,
+            actionText: "View History",
+            action: fetchCycles // Redirect or action
+        };
+    }
+
     if (cycles.length === 0) {
       return {
         title: "No Cycles Started",
@@ -1376,7 +1395,9 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
         </div>
       </div>
 
+      {/* Rest of the UI remains the same... */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {/* ... (Existing stats cards code) ... */}
         <div className="bg-white p-4 rounded-xl border border-gray-200">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm font-medium text-text">Total</div>
@@ -1785,55 +1806,6 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
                           {amILeader ? (
                             // LEADER VIEW: Full Actions
                             <>
-                              {payment.status !== 'paid' ? (
-                                <>
-                                  <button
-                                    onClick={() => handleMarkAsPaid(payment._id)}
-                                    disabled={processingPayment === payment._id}
-                                    className="p-2 bg-success/10 hover:bg-success/20 rounded-lg transition-colors disabled:opacity-50 text-success"
-                                    title="Mark as Paid"
-                                  >
-                                    {processingPayment === payment._id ? (
-                                      <Loader2 size={18} className="animate-spin" />
-                                    ) : (
-                                      <CheckCircle size={18} />
-                                    )}
-                                  </button>
-                                  <button
-                                    onClick={() => handleSendReminder(payment._id)}
-                                    disabled={processingPayment === payment._id}
-                                    className="p-2 bg-accent/10 hover:bg-accent/20 rounded-lg transition-colors disabled:opacity-50 text-accent"
-                                    title="Send Reminder"
-                                  >
-                                    <Send size={18} />
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button
-                                    onClick={() => handleDownloadReceipt(payment._id)}
-                                    disabled={processingPayment === payment._id}
-                                    className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50 text-blue-600"
-                                    title="Download Receipt"
-                                  >
-                                    {processingPayment === payment._id ? (
-                                      <Loader2 size={18} className="animate-spin" />
-                                    ) : (
-                                      <Download size={18} />
-                                    )}
-                                  </button>
-                                  
-                                  <button
-                                    onClick={() => handleMarkAsUnpaid(payment._id)}
-                                    disabled={processingPayment === payment._id}
-                                    className="p-2 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors disabled:opacity-50 text-orange-600"
-                                    title="Mark as Unpaid"
-                                  >
-                                    <RotateCcw size={18} />
-                                  </button>
-                                </>
-                              )}
-                              
                               <div className="relative">
                                 <button
                                   onClick={(e) => toggleActionsMenu(e, payment._id)}

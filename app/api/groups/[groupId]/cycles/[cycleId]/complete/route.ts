@@ -6,7 +6,9 @@ import { GroupMember } from '@/lib/db/models/GroupMember';
 import { PaymentCycle } from '@/lib/db/models/PaymentCycle';
 import { Payment } from '@/lib/db/models/Payment';
 import { User } from '@/lib/db/models/User';
-import { notifyCycleCompleted } from '@/lib/utils/notifications';
+// ✅ ADDED: Import for group-wide notification
+import { notifyCycleCompleted, sendNotificationToAllMembers } from '@/lib/utils/notifications';
+import { NotificationType } from '@/types/notification';
 
 export async function POST(
   request: NextRequest, 
@@ -124,8 +126,27 @@ export async function POST(
       updatedAt: new Date(),
     });
 
-    // ✅ NOTIFICATION: Notify all members about cycle completion
+    // ✅ NOTIFICATION 1: Notify about THIS cycle completion
     await notifyCycleCompleted(cycle);
+
+    // ✅ NOTIFICATION 2: CHECK IF THIS WAS THE LAST CYCLE
+    const totalCycles = group.duration || group.targetMemberCount || 0;
+    
+    if (cycle.cycleNumber >= totalCycles) {
+      console.log(`✅ Group "${group.name}" has completed all ${totalCycles} cycles.`);
+      
+      // OPTIONAL: Mark group as completed in DB if you have a status for it
+      // await Group.findByIdAndUpdate(groupId, { status: 'completed' });
+
+      // Send "All Cycles Completed" Notification to EVERYONE
+      await sendNotificationToAllMembers({
+          groupId: group._id,
+          type: NotificationType.GROUP, // Using GROUP type for high-level alerts
+          title: '🎉 Group Completed!',
+          message: `Total cycles of this "${group.name}" group are completed. No more payments to track.`,
+          priority: 'high'
+      });
+    }
 
     return NextResponse.json({ 
       success: true, 

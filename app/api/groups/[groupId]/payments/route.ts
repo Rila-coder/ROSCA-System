@@ -4,6 +4,7 @@ import connectDB from '@/lib/db/connect';
 import { Payment } from '@/lib/db/models/Payment';
 import { PaymentCycle } from '@/lib/db/models/PaymentCycle';
 import { User } from '@/lib/db/models/User';
+import { Group } from '@/lib/db/models/Group'; // ✅ Added Group Import
 import { GroupMember } from '@/lib/db/models/GroupMember';
 
 export async function GET(
@@ -20,6 +21,23 @@ export async function GET(
     
     const params = await context.params;
     const groupId = params.groupsId || params.groupId || params.id;
+
+    // ✅ STEP 0: FETCH GROUP DETAILS (For Name & Duration Check)
+    const group = await Group.findById(groupId).select('name duration targetMemberCount');
+    if (!group) {
+        return NextResponse.json({ error: 'Group not found' }, { status: 404 });
+    }
+
+    // ✅ CHECK FOR TOTAL COMPLETION
+    // Count how many cycles are "done" (completed or skipped)
+    const completedCyclesCount = await PaymentCycle.countDocuments({
+        groupId,
+        $or: [{ status: 'completed' }, { status: 'skipped' }, { isCompleted: true }, { isSkipped: true }]
+    });
+
+    // Use duration or fallback to member count
+    const totalExpectedCycles = group.duration || group.targetMemberCount || 0;
+    const isGroupCompleted = totalExpectedCycles > 0 && completedCyclesCount >= totalExpectedCycles;
 
     // =================================================================
     // 🔍 STEP 1: FIND THE CORRECT ACTIVE CYCLE
@@ -110,7 +128,10 @@ export async function GET(
 
     return NextResponse.json({ 
       currentCycle: currentCycle || null,
-      payments: formattedPayments 
+      payments: formattedPayments,
+      // ✅ RETURN GROUP INFO FOR FRONTEND MESSAGE
+      groupName: group.name,
+      isGroupCompleted: isGroupCompleted
     });
 
   } catch (error: any) {
