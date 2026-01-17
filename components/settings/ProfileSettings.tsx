@@ -150,7 +150,7 @@ export default function ProfileSettings() {
         toast.success('Profile updated successfully');
         setAvatarChanged(false);
         
-        // ✅ CRITICAL: Dispatch event to notify DashboardHeader
+        // Dispatch event to notify DashboardHeader
         if (typeof window !== 'undefined') {
           // Method 1: Dispatch a custom event
           window.dispatchEvent(new CustomEvent('profileUpdated'));
@@ -382,7 +382,6 @@ export default function ProfileSettings() {
                 });
                 setAvatarChanged(false);
                 setHasCustomAvatar(false);
-                // FIXED: Use toast() instead of toast.info()
                 toast('Form reset to default values');
               }}
               type="button"
@@ -394,8 +393,8 @@ export default function ProfileSettings() {
             
             <button
               onClick={handleSave}
-              // FIXED: Ensure disabled prop returns boolean only
-              disabled={isSaving || (!avatarChanged && !!profile.name.trim() && !!profile.phone.trim())}
+              // ✅ FIXED LOGIC HERE: Button enabled if saving OR name/phone are NOT empty
+              disabled={isSaving || !profile.name.trim() || !profile.phone.trim()}
               className="px-6 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-dark flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-w-35"
               aria-label="Save profile changes"
             >

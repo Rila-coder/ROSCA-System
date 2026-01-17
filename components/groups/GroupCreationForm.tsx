@@ -66,7 +66,7 @@ interface GroupCreationFormProps {
 
 export default function GroupCreationForm({ onStepChange }: GroupCreationFormProps) {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -76,6 +76,11 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
   >({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [acceptTerms, setAcceptTerms] = useState(false);
+
+  // Phone Number Modal State
+  const [isPhoneModalOpen, setIsPhoneModalOpen] = useState(false);
+  const [missingPhoneInput, setMissingPhoneInput] = useState("");
+  const [isSavingPhone, setIsSavingPhone] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -119,6 +124,16 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
       onStepChange(newStep);
     }
   };
+
+  // ✅ FIX: Force refresh user data on mount to catch recent profile updates
+  useEffect(() => {
+    const initData = async () => {
+      if (refreshUser) {
+        await refreshUser();
+      }
+    };
+    initData();
+  }, []); // Empty dependency array means this runs once when page loads
 
   // Initialize with creator info if user exists
   useEffect(() => {
@@ -454,19 +469,82 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
     }
   };
 
-  // Fixed handleAddCreator function
+  // Handle "Add Me" Click - Logic to check phone number
   const handleAddCreator = () => {
     if (!user) {
       toast.error("You must be logged in to add yourself");
       return;
     }
 
-    const creatorEmail = user.email || "";
-    const creatorName = user.name || "You";
-    // ✅ FIX: Removed user.mobile which caused the build error
-    const creatorPhone = user.phone || "";
+    // 1. Check if user already has a phone number
+    if (!user.phone) {
+      // Open modal to ask for phone number
+      setIsPhoneModalOpen(true);
+      return;
+    }
 
-    // Check if creator is already added - more thorough check
+    // 2. Standard adding logic if phone exists
+    proceedToAddCreator();
+  };
+
+  // Logic to save the phone number from the modal
+  const handleSaveMissingPhone = async () => {
+    if (!missingPhoneInput.trim()) {
+      toast.error("Please enter your phone number");
+      return;
+    }
+
+    const phoneRegex = /^[+]?[0-9\s\-\(\)]{10,15}$/;
+    if (!phoneRegex.test(missingPhoneInput)) {
+      toast.error("Please enter a valid phone number");
+      return;
+    }
+
+    setIsSavingPhone(true);
+    try {
+      // Send avatar as empty string ('') to preserve existing Google image
+      const updateData = {
+        name: user?.name,
+        phone: missingPhoneInput.trim(),
+        avatar: '' // Empty string tells backend "Don't change this"
+      };
+
+      const res = await fetch('/api/users/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateData),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to save phone number");
+      }
+
+      // Success: Refresh the Auth Session so the user object updates globally
+      await refreshUser();
+      
+      toast.success("Phone number saved! Adding you to group...");
+      
+      // Close modal and proceed to add to group
+      setIsPhoneModalOpen(false);
+      proceedToAddCreator();
+
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to save phone number. Please try again.");
+    } finally {
+      setIsSavingPhone(false);
+    }
+  };
+
+  // Shared function to actually add the user object to the list
+  const proceedToAddCreator = () => {
+    // Re-check user (if called after refresh, user object is updated)
+    const currentPhone = user?.phone || missingPhoneInput || ""; 
+
+    const creatorEmail = user?.email || "";
+    const creatorName = user?.name || "You";
+
+    // Check if creator is already added
     const isAlreadyAdded = members.some(member => 
       (member.email && creatorEmail && member.email.toLowerCase() === creatorEmail.toLowerCase()) || 
       member.isCreator
@@ -489,7 +567,7 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
       id: creatorId,
       name: creatorName,
       email: creatorEmail,
-      phone: creatorPhone,
+      phone: currentPhone, // Use the fresh phone number
       isCreator: true,
       isLeader: false,
       isRegistered: true,
@@ -497,7 +575,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
 
     setMembers((prev) => [...prev, creatorMember]);
     setIncludeCreator(true);
-    toast.success("You have been added to the group!");
   };
 
   const handleImportFromLastAdded = () => {
@@ -521,7 +598,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
     let addedCount = 0;
 
     membersToAdd.forEach((savedMember) => {
-      // Check if already added
       if (
         members.some(
           (m) => m.email.toLowerCase() === savedMember.email.toLowerCase()
@@ -530,7 +606,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
         return;
       }
 
-      // Check for duplicates in the batch
       const batchDuplicates = membersToAdd.filter(
         (m, idx) =>
           idx < addedCount &&
@@ -581,7 +656,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
         const lines = content.split("\n").filter((line) => line.trim());
         const importedMembers: Member[] = [];
 
-        // Skip header if exists
         let startIndex = 0;
         if (
           lines[0].toLowerCase().includes("name") ||
@@ -590,7 +664,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
           startIndex = 1;
         }
 
-        // Collect all imported emails and phones for duplicate checking
         const importedEmails = new Set<string>();
         const importedPhones = new Set<string>();
 
@@ -600,7 +673,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
             const email = parts[1].toLowerCase();
             const phone = parts[2].replace(/\D/g, "");
 
-            // Check for duplicates within CSV
             if (importedEmails.has(email) || importedPhones.has(phone)) {
               toast.error(
                 `Duplicate found in CSV at line ${i + 1}: ${parts[0]}`
@@ -613,7 +685,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
 
             const memberId = `imported-${Date.now()}-${i}`;
 
-            // Check if member is registered
             let isRegistered = false;
             try {
               const response = await fetch("/api/users/check", {
@@ -652,7 +723,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
             Math.min(availableSlots, importedMembers.length)
           );
 
-          // Filter out duplicates with existing members
           const filteredMembers = membersToAdd.filter(
             (newMember) =>
               !members.some(
@@ -667,7 +737,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
           if (filteredMembers.length > 0) {
             setMembers((prev) => [...prev, ...filteredMembers]);
 
-            // Save to recently used
             const newSavedMembers: SavedMember[] = filteredMembers.map((m) => ({
               name: m.name,
               email: m.email,
@@ -707,7 +776,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
         );
       }
 
-      // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -745,7 +813,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
     toast.success(`Exported ${members.length} members to CSV`);
   };
 
-  // Number Assignment Functions
   const handleRandomizeNumbers = () => {
     const shuffled = [...members].sort(() => 0.5 - Math.random());
     const assignments: Record<string, number> = {};
@@ -759,7 +826,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
   const handleManualNumberChange = (memberId: string, numberStr: string) => {
     const num = parseInt(numberStr);
     if (!num) {
-      // If empty, remove the assignment
       const newAssignments = { ...assignedNumbers };
       delete newAssignments[memberId];
       setAssignedNumbers(newAssignments);
@@ -771,7 +837,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
       return;
     }
 
-    // Check if number is already assigned to another member
     const existingMemberId = Object.keys(assignedNumbers).find(
       (id) => id !== memberId && assignedNumbers[id] === num
     );
@@ -790,7 +855,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
     }));
   };
 
-  // Get available numbers for a specific member (excluding their current number)
   const getAvailableNumbersForMember = (memberId: string) => {
     const totalNumbers = Array.from({ length: members.length }, (_, i) => i + 1);
     const usedNumbers = Object.entries(assignedNumbers)
@@ -800,7 +864,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
     return totalNumbers.filter(num => !usedNumbers.includes(num));
   };
 
-  // ✅ FIXED SUBMISSION FUNCTION - Added targetMemberCount field
   const handleSubmit = async () => {
     if (!acceptTerms) {
       toast.error("You must accept the Terms and Conditions to create the group");
@@ -818,13 +881,8 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
         description: formData.description,
         contributionAmount: parseFloat(formData.contributionAmount),
         frequency: formData.frequency,
-        
-        // ✅ CRITICAL FIX: Add targetMemberCount field (required by backend)
         targetMemberCount: members.length,
-        
-        // You can keep duration as well, but targetMemberCount is mandatory
         duration: members.length,
-        
         startDate: formData.startDate,
         bankAccount: formData.bankAccount.bankName
           ? formData.bankAccount
@@ -840,7 +898,7 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
         })),
       };
 
-      console.log("Submitting group data:", groupData); // Debug log
+      console.log("Submitting group data:", groupData); 
 
       const response = await fetch("/api/groups", {
         method: "POST",
@@ -853,7 +911,7 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
       toast.dismiss("create-group");
 
       if (!response.ok) {
-        console.error("Backend error:", data); // Debug log
+        console.error("Backend error:", data);
         throw new Error(data.message || data.error || "Failed to create group");
       }
 
@@ -897,13 +955,11 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
     }
   };
 
-  // Render step content
   const renderStepContent = () => {
     switch (step) {
       case 1:
         return (
           <div className="space-y-4 sm:space-y-6">
-            {/* Group Name */}
             <div>
               <label className="block text-sm font-medium text-text mb-2">
                 Group Name *
@@ -924,7 +980,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               )}
             </div>
 
-            {/* Description */}
             <div>
               <label className="block text-sm font-medium text-text mb-2">
                 Description (Optional)
@@ -939,7 +994,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               />
             </div>
 
-            {/* Contribution Details - Smart Grid: Stack on mobile, grid on larger */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               <div>
                 <label className="block text-sm font-medium text-text mb-2">
@@ -1029,7 +1083,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               </div>
             </div>
 
-            {/* Start Date */}
             <div>
               <label className="block text-sm font-medium text-text mb-2">
                 Start Date *
@@ -1049,7 +1102,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               )}
             </div>
 
-            {/* Dynamic Summary */}
             <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
               <h3 className="font-medium text-text mb-3 text-sm sm:text-base">
                 Group Summary
@@ -1092,7 +1144,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               </div>
             </div>
 
-            {/* Bank Account (Optional) */}
             <div className="border border-gray-200 rounded-lg p-4">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-text text-sm sm:text-base">
@@ -1149,7 +1200,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
       case 2:
         return (
           <div className="space-y-6">
-            {/* Member Count Status */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-gray-50 p-4 rounded-lg gap-2">
               <div>
                 <h3 className="font-medium text-text">Add Members</h3>
@@ -1172,7 +1222,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               </div>
             </div>
 
-            {/* Add Creator Option */}
             {user &&
               !includeCreator && (
                 <div className="border border-primary/30 bg-primary/5 rounded-lg p-4">
@@ -1201,7 +1250,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
                 </div>
               )}
 
-            {/* Import/Export Options - Grid layout optimized for mobile */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <button
                 onClick={handleImportFromLastAdded}
@@ -1283,7 +1331,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               className="hidden"
             />
 
-            {/* Saved Members Modal */}
             {showSavedMembers && savedMembers.length > 0 && (
               <div className="border border-gray-200 rounded-lg p-4">
                 <div className="flex justify-between items-center mb-3">
@@ -1328,7 +1375,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               </div>
             )}
 
-            {/* Add Member Form - Stacked on mobile */}
             <div className="border border-gray-200 rounded-lg p-4">
               <h4 className="font-medium text-text mb-3">Add New Member</h4>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1372,7 +1418,6 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
               </button>
             </div>
 
-            {/* Members List */}
             <div className="space-y-3">
               <h4 className="font-medium text-text">Members List</h4>
               {members.length === 0 ? (
@@ -1470,15 +1515,13 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
                             Make Leader
                           </button>
                         )}
-                        {/* Only show delete for non-creator members */}
-                        {!member.isCreator && (
-                          <button
-                            onClick={() => removeMember(member.id)}
-                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        )}
+                        {/* ✅ FIX: Allowed creator to be removed (removed the !member.isCreator condition) */}
+                        <button
+                          onClick={() => removeMember(member.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
+                        >
+                          <Trash2 size={18} />
+                        </button>
                       </div>
                     </div>
 
@@ -2019,6 +2062,79 @@ export default function GroupCreationForm({ onStepChange }: GroupCreationFormPro
 
       {/* Step Content */}
       {renderStepContent()}
+
+      {/* ✅ Phone Number Modal */}
+      {isPhoneModalOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center shrink-0">
+                  <AlertTriangle className="text-yellow-600" size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-text">Phone Number Required</h3>
+                  <p className="text-sm text-text/60">To join a group, you must add a phone number to your profile.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsPhoneModalOpen(false)}
+                className="text-text/40 hover:text-text"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-text mb-2">
+                  Your Phone Number <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <Phone size={18} className="absolute left-3 top-3 text-text/40" />
+                  <input
+                    type="tel"
+                    value={missingPhoneInput}
+                    onChange={(e) => setMissingPhoneInput(e.target.value)}
+                    className="input-field pl-10 w-full"
+                    placeholder="+91 1234567890"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-xs text-text/40 mt-1">
+                  This will be saved to your profile for future use.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setIsPhoneModalOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-text/60 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveMissingPhone}
+                  disabled={isSavingPhone}
+                  className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors flex items-center gap-2"
+                >
+                  {isSavingPhone ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} />
+                      Save & Add Me
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Navigation Buttons - Reversed column on mobile for easier Next access */}
       <div className="flex flex-col-reverse sm:flex-row justify-between mt-8 pt-6 border-t border-gray-200 gap-3 sm:gap-0">
