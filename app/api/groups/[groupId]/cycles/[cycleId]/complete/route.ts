@@ -120,13 +120,13 @@ export async function POST(
       );
     }
 
-    // 1️⃣1️⃣ Update group
+    // 1️⃣1️⃣ Update group (Reset current cycle)
     await Group.findByIdAndUpdate(groupId, {
       currentCycle: null,
       updatedAt: new Date(),
     });
 
-    // ✅ NOTIFICATION 1: Notify about THIS cycle completion
+    // ✅ NOTIFICATION 1: Notify members about THIS cycle completion
     await notifyCycleCompleted(cycle);
 
     // ✅ NOTIFICATION 2: CHECK IF THIS WAS THE LAST CYCLE
@@ -135,13 +135,16 @@ export async function POST(
     if (cycle.cycleNumber >= totalCycles) {
       console.log(`✅ Group "${group.name}" has completed all ${totalCycles} cycles.`);
       
-      // OPTIONAL: Mark group as completed in DB if you have a status for it
-      // await Group.findByIdAndUpdate(groupId, { status: 'completed' });
+      // ✅ FIX: ACTUALLY UPDATE THE DATABASE STATUS TO 'completed'
+      await Group.findByIdAndUpdate(groupId, { 
+          status: 'completed',
+          currentCycle: null 
+      });
 
       // Send "All Cycles Completed" Notification to EVERYONE
       await sendNotificationToAllMembers({
           groupId: group._id,
-          type: NotificationType.GROUP, // Using GROUP type for high-level alerts
+          type: NotificationType.GROUP, 
           title: '🎉 Group Completed!',
           message: `Total cycles of this "${group.name}" group are completed. No more payments to track.`,
           priority: 'high'
@@ -151,7 +154,7 @@ export async function POST(
     return NextResponse.json({ 
       success: true, 
       cycle,
-      message: `Cycle #${cycle.cycleNumber} completed successfully! You can now start the next one.` 
+      message: `Cycle #${cycle.cycleNumber} completed successfully! ${cycle.cycleNumber >= totalCycles ? 'Group Completed!' : 'You can now start the next one.'}`
     });
 
   } catch (error: any) {

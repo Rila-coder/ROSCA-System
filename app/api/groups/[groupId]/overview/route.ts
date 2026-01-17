@@ -57,12 +57,13 @@ export async function GET(
       upcomingDrawsRaw, // Renamed to process later
       totalCollectedResult,
       pendingPayments,
-      totalPayments
+      totalPayments,
+      completedCyclesCount // ✅ NEW: Count completed cycles
     ] = await Promise.all([
       Group.findById(groupId),
       GroupMember.countDocuments({ groupId }),
       GroupMember.countDocuments({ groupId, status: 'active' }),
-      PaymentCycle.findOne({ groupId, isCompleted: false }).sort('cycleNumber'),
+      PaymentCycle.findOne({ groupId, isCompleted: false, isSkipped: false }).sort('cycleNumber'),
       Payment.find({ groupId })
         .populate('userId', 'name')
         .populate('memberId') // ✅ Populate Member Snapshot for Recent Payments
@@ -85,12 +86,22 @@ export async function GET(
       ]),
 
       Payment.countDocuments({ groupId, status: 'pending' }),
-      Payment.countDocuments({ groupId })
+      Payment.countDocuments({ groupId }),
+      
+      // ✅ NEW: Count completed or skipped cycles
+      PaymentCycle.countDocuments({
+          groupId,
+          $or: [{ status: 'completed' }, { status: 'skipped' }, { isCompleted: true }, { isSkipped: true }]
+      })
     ]);
 
     if (!group) {
       return NextResponse.json({ error: 'Group not found' }, { status: 404 });
     }
+
+    // ✅ CHECK FOR TOTAL COMPLETION
+    const totalExpectedCycles = group.duration || group.targetMemberCount || 0;
+    const isGroupCompleted = totalExpectedCycles > 0 && completedCyclesCount >= totalExpectedCycles;
 
     // 6. Calculate Stats
     const totalCollected = totalCollectedResult[0]?.total || 0;
@@ -100,7 +111,9 @@ export async function GET(
 
     // 7. Next Draw Calculation
     let nextDraw = 'No upcoming draws';
-    if (upcomingDrawsRaw.length > 0) {
+    if (isGroupCompleted) {
+        nextDraw = 'Completed';
+    } else if (upcomingDrawsRaw.length > 0) {
       const dueDate = new Date(upcomingDrawsRaw[0].dueDate);
       const today = new Date();
       const daysDiff = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -181,6 +194,7 @@ export async function GET(
       upcomingDraws: formattedUpcomingDraws,
       memberCount,
       totalCollected,
+      isGroupCompleted // ✅ Send this flag to frontend
     });
 
   } catch (error: any) {

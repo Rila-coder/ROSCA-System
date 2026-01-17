@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import {
   Users, Calendar, DollarSign, Clock,
   MoreVertical, Share2, Edit,
-  Shield, Crown, Loader2
+  Shield, Crown, Loader2, CheckCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
@@ -34,6 +34,7 @@ interface GroupHeaderProps {
     };
     createdAt: string;
     updatedAt: string;
+    targetMemberCount?: number;
   };
 }
 
@@ -42,9 +43,15 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
   const { user } = useAuth();
   const router = useRouter();
 
-  // State to hold the "Real" names from the Member Snapshot (not just User Profile)
+  // State to hold the "Real" names from the Member Snapshot
   const [leaderDisplayName, setLeaderDisplayName] = useState(group.leader?.name || 'Unknown');
   const [subLeaderDisplayNames, setSubLeaderDisplayNames] = useState<any[]>(group.subLeaders || []);
+
+  // ✅ 1. Determine if group is completed (Database status OR calculated logic)
+  const isGroupCompleted = 
+    group.status === 'completed' || 
+    (group.duration > 0 && group.currentCycle === null) || // Backend sets currentCycle to null on completion
+    (group.duration > 0 && group.currentCycle > group.duration);
 
   // Fetch Member Data to get Correct Names (Snapshot Names)
   useEffect(() => {
@@ -56,18 +63,17 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
           const data = await response.json();
           const members = data.members || [];
 
-          // 1. Update Leader Name
+          // Update Leader Name
           if (group.leader?.id) {
             const leaderMember = members.find((m: any) =>
                (m.userId?._id || m.userId) === group.leader?.id
             );
             if (leaderMember) {
-               // Prioritize Snapshot Name > User Name
                setLeaderDisplayName(leaderMember.name || leaderMember.userId?.name || group.leader.name);
             }
           }
 
-          // 2. Update Sub-leader Names
+          // Update Sub-leader Names
           if (group.subLeaders && group.subLeaders.length > 0) {
              const updatedSubs = group.subLeaders.map(sub => {
                 const subMember = members.find((m: any) =>
@@ -94,13 +100,18 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
 
   const isLeader = user && group.leader && (user.id === group.leader.id || (user as any)._id === group.leader.id);
 
+  // ✅ 2. Progress Calculation
   const calculateProgress = () => {
+    if (isGroupCompleted) return 100; // Force 100% if completed
     if (!group.duration || group.duration === 0) return 0;
-    const current = group.currentCycle || 1;
+    
+    // Default to 1 if null, prevents division errors
+    const current = group.currentCycle || 1; 
     return Math.round(((current - 1) / group.duration) * 100);
   };
 
-  const cyclesRemaining = Math.max(0, (group.duration || 0) - (group.currentCycle || 0));
+  // ✅ 3. Remaining Cycles Logic
+  const cyclesRemaining = isGroupCompleted ? 0 : Math.max(0, (group.duration || 0) - (group.currentCycle || 0));
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -134,6 +145,7 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
   };
 
   const getDaysRemaining = () => {
+    if (isGroupCompleted) return 0;
     if (!group.endDate) return 0;
     const endDate = new Date(group.endDate);
     const today = new Date();
@@ -154,16 +166,24 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
                 <h1 className="text-xl sm:text-2xl font-bold text-text truncate max-w-full">
                   {group.name || 'Untitled Group'}
                 </h1>
-                <span className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap ${
-                  group.status === 'active'
+                
+                {/* ✅ 4. Updated Status Badge */}
+                <span className={`px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap flex items-center gap-1 ${
+                  isGroupCompleted
+                    ? 'bg-green-100 text-green-700 border border-green-200'
+                    : group.status === 'active'
                     ? 'bg-success/10 text-success'
-                    : group.status === 'completed'
-                    ? 'bg-accent/10 text-accent'
                     : group.status === 'forming'
                     ? 'bg-blue-100 text-blue-600'
                     : 'bg-gray-100 text-gray-600'
                 }`}>
-                  {group.status ? group.status.charAt(0).toUpperCase() + group.status.slice(1) : 'Unknown'}
+                  {isGroupCompleted ? (
+                    <>
+                      <CheckCircle size={12} /> Completed
+                    </>
+                  ) : (
+                    group.status ? group.status.charAt(0).toUpperCase() + group.status.slice(1) : 'Unknown'
+                  )}
                 </span>
               </div>
 
@@ -171,7 +191,7 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
                 {group.description || 'No description'}
               </p>
 
-              {/* Mobile: 2-column Grid, Desktop: Flex Row */}
+              {/* Stats Grid */}
               <div className="grid grid-cols-2 md:flex md:flex-wrap gap-3 md:gap-6 text-sm">
                 <div className="flex items-center gap-2 bg-gray-50 md:bg-transparent p-2 md:p-0 rounded-lg">
                   <Users size={16} className="text-text/40 flex-shrink-0" />
@@ -183,14 +203,20 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
                     {formatCurrency(group.contributionAmount)} <span className="text-xs text-text/50">{group.frequency}</span>
                   </span>
                 </div>
+                
+                {/* ✅ 5. Cycle Info Updates based on completion */}
                 <div className="flex items-center gap-2 bg-gray-50 md:bg-transparent p-2 md:p-0 rounded-lg">
                   <Calendar size={16} className="text-text/40 flex-shrink-0" />
-                  <span className="truncate font-medium text-text/80">
-                    {group.currentCycle > 0
-                      ? `Cycle ${group.currentCycle}/${group.duration || 0}`
-                      : `Not Started (${group.duration || 0} Cycles)`}
+                  <span className={`truncate font-medium ${isGroupCompleted ? 'text-green-600' : 'text-text/80'}`}>
+                    {isGroupCompleted 
+                        ? `All ${group.duration || 0} Cycles Completed`
+                        : group.currentCycle > 0
+                        ? `Cycle ${group.currentCycle}/${group.duration || 0}`
+                        : `Not Started (${group.duration || 0} Cycles)`
+                    }
                   </span>
                 </div>
+                
                 <div className="flex items-center gap-2 bg-gray-50 md:bg-transparent p-2 md:p-0 rounded-lg">
                   <Clock size={16} className="text-text/40 flex-shrink-0" />
                   <span className="truncate font-medium text-text/80">Ends {formatDate(group.endDate)}</span>
@@ -198,8 +224,8 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
               </div>
             </div>
 
-            {/* Actions Dropdown - Visible only to Leader */}
-            {isLeader && (
+            {/* Actions Dropdown - Hidden if completed or user not leader */}
+            {isLeader && !isGroupCompleted && (
               <div className="relative flex-shrink-0">
                 <button
                   onClick={() => setShowDropdown(!showDropdown)}
@@ -225,27 +251,35 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
             )}
           </div>
 
-          {/* Progress Bar */}
+          {/* ✅ 6. Progress Bar with Dynamic Color */}
           <div className="mt-6">
             <div className="flex justify-between text-sm mb-1.5">
-              <span className="font-medium text-text/70">Group Progress</span>
-              <span className="font-bold text-primary">{calculateProgress()}%</span>
+              <span className="font-medium text-text/70">
+                 {isGroupCompleted ? "Group Successfully Completed" : "Group Progress"}
+              </span>
+              <span className={`font-bold ${isGroupCompleted ? 'text-green-600' : 'text-primary'}`}>
+                {calculateProgress()}%
+              </span>
             </div>
             <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
               <div
-                className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
+                // If completed -> GREEN, Else -> BLUE (Primary)
+                className={`h-full rounded-full transition-all duration-500 ease-out ${
+                    isGroupCompleted ? 'bg-green-500' : 'bg-primary'
+                }`}
                 style={{ width: `${calculateProgress()}%` }}
               />
             </div>
             <div className="flex flex-wrap justify-between text-xs text-text/50 mt-1.5 gap-1">
               <span>Started: {formatDate(group.startDate)}</span>
-              <span className="font-medium text-text/70">{getDaysRemaining()} days remaining</span>
+              <span className={`font-medium ${isGroupCompleted ? 'text-green-600' : 'text-text/70'}`}>
+                {isGroupCompleted ? "Successfully Ended" : `${getDaysRemaining()} days remaining`}
+              </span>
             </div>
           </div>
         </div>
 
         {/* Right side - Stats & Leadership */}
-        {/* On Mobile/Tablet: Grid (side-by-side). On Desktop: Stacked (vertical) */}
         <div className="w-full lg:w-72 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
           {/* Total Pool Card */}
           <div className="bg-primary/5 border border-primary/10 rounded-xl p-4 sm:p-5 flex flex-col justify-center">
@@ -254,7 +288,7 @@ export default function GroupHeader({ group }: GroupHeaderProps) {
               {formatCurrency(group.totalAmount)}
             </div>
             <div className="text-xs text-text/50 mt-1">
-              {cyclesRemaining} cycles remaining
+              {isGroupCompleted ? "All cycles completed" : `${cyclesRemaining} cycles remaining`}
             </div>
           </div>
 

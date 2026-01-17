@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation"; // ✅ IMPORT ROUTER
 import {
   Calendar,
   CheckCircle,
@@ -13,16 +14,19 @@ import {
   Loader2,
   RefreshCw,
   Zap,
-  Trophy // ✅ Imported Trophy icon for success message
+  Trophy,
+  FileText,
+  Receipt
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable"; 
 
-// 1. Update Interface to accept RBAC permission
 interface CycleManagementProps {
   groupId: string;
-  canManage?: boolean; // Controls visibility of action buttons
-  currentCycle?: any; // Accepting currentCycle if passed from parent to avoid double fetch
-  members?: any[]; // ✅ FROM GEMINI'S UPDATE: Added members prop
+  canManage?: boolean; 
+  currentCycle?: any; 
+  members?: any[]; 
 }
 
 type CycleStatus = "completed" | "active" | "upcoming" | "skipped";
@@ -30,13 +34,17 @@ type CycleStatus = "completed" | "active" | "upcoming" | "skipped";
 export default function CycleManagement({ 
   groupId, 
   canManage = false,
-  members = [] // ✅ FROM GEMINI'S UPDATE: Added members prop with default
+  members = [] 
 }: CycleManagementProps) {
+  const router = useRouter(); // ✅ INITIALIZE ROUTER
   const [cycles, setCycles] = useState<any[]>([]);
-  const [groupDuration, setGroupDuration] = useState<number>(0); // ✅ Track max cycles
+  const [groupDuration, setGroupDuration] = useState<number>(0); 
+  const [groupName, setGroupName] = useState<string>("ROSCA Group"); 
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<any | null>(null);
+  const [generatingPDF, setGeneratingPDF] = useState(false);
+  const [generatingReceipt, setGeneratingReceipt] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCycles();
@@ -55,9 +63,9 @@ export default function CycleManagement({
 
       const data = await response.json();
       setCycles(data.cycles || []);
-      setGroupDuration(data.totalDuration || 0); // ✅ Capture group total duration
+      setGroupDuration(data.totalDuration || 0); 
+      setGroupName(data.groupName || "ROSCA Group"); 
 
-      // Select active cycle if available, otherwise first cycle
       const activeCycle = data.cycles.find(
         (c: any) => getCycleStatus(c) === "active"
       );
@@ -65,7 +73,6 @@ export default function CycleManagement({
         (c: any) => getCycleStatus(c) === "upcoming"
       );
       
-      // Priority: Active > Upcoming > First cycle
       setSelectedCycle(
         activeCycle || upcomingCycle || data.cycles[0] || null
       );
@@ -78,7 +85,7 @@ export default function CycleManagement({
   };
 
   const handleCompleteCycle = async (cycleId: string) => {
-    if (!canManage) return; // Extra safety check
+    if (!canManage) return; 
     if (!confirm("Are you sure you want to complete this cycle?")) return;
 
     try {
@@ -99,6 +106,9 @@ export default function CycleManagement({
         }
         return;
       }
+
+      // ✅ FIX: Refresh the page data so the Group Header updates immediately
+      router.refresh(); 
 
       await fetchCycles();
       toast.success(data.message || "Cycle completed successfully!");
@@ -227,7 +237,7 @@ export default function CycleManagement({
         },
         body: JSON.stringify({
           startDate: new Date().toISOString().split("T")[0],
-          isUpcomingCycle: false, // Explicitly false for normal next cycle
+          isUpcomingCycle: false, 
         }),
       });
 
@@ -266,7 +276,7 @@ export default function CycleManagement({
         },
         body: JSON.stringify({
           startDate: new Date().toISOString().split("T")[0],
-          isUpcomingCycle: true, // Explicitly true for upcoming cycle
+          isUpcomingCycle: true, 
         }),
       });
 
@@ -291,11 +301,307 @@ export default function CycleManagement({
     }
   };
 
-  // ✅ FROM GEMINI'S UPDATE: Helper function to get recipient name from snapshot data
+  const handleExportSchedule = async () => {
+    if (!canManage) {
+      toast.error("Only group leader can export schedule");
+      return;
+    }
+
+    if (!isGroupFullyCompleted()) {
+      toast.error("Export schedule is only available when all cycles are completed");
+      return;
+    }
+
+    try {
+      setGeneratingPDF(true);
+      toast.loading("Generating cycle schedule PDF...");
+
+      const doc = new jsPDF();
+      
+      doc.setFillColor(59, 130, 246);
+      doc.rect(0, 0, 210, 30, 'F');
+      
+      doc.setFontSize(20);
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.text("COMPLETE CYCLE SCHEDULE", 105, 18, { align: "center" });
+      
+      doc.setFontSize(10);
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Group: ${groupName} • Generated: ${new Date().toLocaleDateString()}`, 105, 25, { align: "center" });
+      
+      let y = 40;
+      
+      doc.setFontSize(14);
+      doc.setTextColor(40, 40, 40);
+      doc.setFont("helvetica", "bold");
+      doc.text("GROUP SUMMARY", 20, y);
+      
+      y += 10;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 100, 100);
+      
+      doc.text(`Group Name: ${groupName}`, 20, y);
+      y += 7;
+      doc.text(`Total Cycles: ${stats.totalCycles}`, 20, y);
+      y += 7;
+      doc.text(`Completed Cycles: ${stats.completedCycles}`, 20, y);
+      y += 7;
+      doc.text(`Skipped Cycles: ${stats.skippedCycles}`, 20, y);
+      y += 7;
+      doc.text(`Total Distributed: ₹${stats.totalDistributed.toLocaleString()}`, 20, y);
+      
+      y += 15;
+      
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(40, 40, 40);
+      doc.text("CYCLE DETAILS", 20, y);
+      
+      y += 10;
+      
+      const tableData = cycles.map(cycle => {
+        const status = getCycleStatus(cycle);
+        const recipientName = getRecipientName(cycle);
+        const amount = cycle.amount || 0;
+        const dueDate = cycle.dueDate ? new Date(cycle.dueDate).toLocaleDateString() : 'N/A';
+        const completedDate = cycle.completedAt ? new Date(cycle.completedAt).toLocaleDateString() : 'N/A';
+        
+        return [
+          `#${cycle.cycleNumber}`,
+          recipientName,
+          `₹${amount.toLocaleString()}`,
+          status.charAt(0).toUpperCase() + status.slice(1),
+          dueDate,
+          completedDate
+        ];
+      });
+      
+      autoTable(doc, {
+        startY: y,
+        head: [['Cycle', 'Recipient', 'Amount', 'Status', 'Due Date', 'Completed Date']],
+        body: tableData,
+        headStyles: {
+          fillColor: [59, 130, 246],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold'
+        },
+        alternateRowStyles: {
+          fillColor: [245, 245, 245]
+        },
+        styles: {
+          fontSize: 9,
+          cellPadding: 3
+        },
+        columnStyles: {
+          0: { cellWidth: 20 },
+          1: { cellWidth: 45 },
+          2: { cellWidth: 35 },
+          3: { cellWidth: 25 },
+          4: { cellWidth: 35 },
+          5: { cellWidth: 35 }
+        }
+      });
+      
+      const finalY = (doc as any).lastAutoTable.finalY;
+      y = finalY + 10;
+      
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(40, 40, 40);
+      doc.text("FINAL STATISTICS", 20, y);
+      
+      y += 15;
+      const summaryStats = [
+        ["Total Cycles Completed", `${stats.completedCycles} of ${stats.totalCycles}`],
+        ["Total Amount Distributed", `₹${stats.totalDistributed.toLocaleString()}`],
+        ["Average Per Cycle", `₹${(stats.totalDistributed / stats.completedCycles).toLocaleString()}`],
+        ["Success Rate", `${((stats.completedCycles / stats.totalCycles) * 100).toFixed(1)}%`]
+      ];
+      
+      summaryStats.forEach(([label, value]) => {
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 100, 100);
+        doc.text(label, 20, y);
+        
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(59, 130, 246);
+        doc.text(value, 100, y);
+        
+        y += 7;
+      });
+      
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Generated by ROSCA System • Total Records: ${cycles.length}`, 105, 285, { align: "center" });
+      doc.text("All cycles successfully completed!", 105, 290, { align: "center" });
+      
+      const fileName = `${groupName.replace(/\s+/g, '_')}_Complete_Schedule_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+      
+      toast.dismiss();
+      toast.success('Schedule PDF downloaded successfully!');
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      toast.dismiss();
+      toast.error('Failed to generate PDF');
+    } finally {
+      setGeneratingPDF(false);
+    }
+  };
+
+  const handleGenerateReceipt = async (cycleId: string) => {
+    if (!canManage) {
+      toast.error("Only group leader can generate receipts");
+      return;
+    }
+
+    const cycle = cycles.find(c => c._id === cycleId);
+    if (!cycle) {
+      toast.error("Cycle not found");
+      return;
+    }
+
+    if (getCycleStatus(cycle) !== "completed") {
+      toast.error("Receipt can only be generated for completed cycles");
+      return;
+    }
+
+    try {
+      setGeneratingReceipt(cycleId);
+      toast.loading(`Generating receipt for Cycle #${cycle.cycleNumber}...`);
+
+      const recipientName = getRecipientName(cycle);
+      const amount = cycle.amount || 0;
+      const completedDate = cycle.completedAt ? new Date(cycle.completedAt).toLocaleDateString() : 'N/A';
+      const dueDate = cycle.dueDate ? new Date(cycle.dueDate).toLocaleDateString() : 'N/A';
+      const receiptId = `REC-${cycle.cycleNumber.toString().padStart(3, '0')}-${cycle._id.slice(-6).toUpperCase()}`;
+      
+      const doc = new jsPDF();
+      
+      doc.setFillColor(59, 130, 246);
+      doc.rect(0, 0, 210, 40, 'F');
+      
+      doc.setFontSize(24);
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.text("CYCLE COMPLETION RECEIPT", 105, 20, { align: "center" });
+      
+      doc.setFontSize(10);
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Group: ${groupName} • Receipt No: ${receiptId}`, 105, 30, { align: "center" });
+      
+      let y = 55;
+      
+      doc.setFillColor(245, 245, 245);
+      doc.roundedRect(15, y, 180, 50, 3, 3, 'F');
+      
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(40, 40, 40);
+      doc.text("RECIPIENT DETAILS", 105, y + 10, { align: "center" });
+      
+      y += 15;
+      doc.setFontSize(12);
+      doc.setTextColor(100, 100, 100);
+      doc.text("Name:", 25, y);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text(recipientName, 80, y);
+      
+      y += 8;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 100, 100);
+      doc.text("Cycle Number:", 25, y);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text(`#${cycle.cycleNumber}`, 80, y);
+      
+      y += 8;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 100, 100);
+      doc.text("Amount Received:", 25, y);
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(34, 197, 94);
+      doc.text(`₹${amount.toLocaleString()}`, 80, y);
+      
+      y += 20;
+      
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(40, 40, 40);
+      doc.text("CYCLE INFORMATION", 105, y, { align: "center" });
+      
+      y += 15;
+      const details = [
+        ["Due Date", dueDate],
+        ["Completed Date", completedDate],
+        ["Status", "Completed"],
+        ["Payment Verified", "Yes"]
+      ];
+      
+      details.forEach(([label, value]) => {
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 100, 100);
+        doc.text(label, 25, y);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0, 0, 0);
+        doc.text(value, 100, y);
+        y += 7;
+      });
+      
+      y += 10;
+      
+      doc.setFillColor(220, 252, 231);
+      doc.roundedRect(75, y, 60, 20, 10, 10, 'F');
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(22, 163, 74);
+      doc.text("COMPLETED", 105, y + 13, { align: "center" });
+      
+      y += 35;
+      
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(150, 150, 150);
+      doc.text("This is an official ROSCA completion receipt.", 105, y, { align: "center" });
+      y += 5;
+      doc.text("Thank you for your participation in the ROSCA group!", 105, y, { align: "center" });
+      y += 5;
+      doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 105, y, { align: "center" });
+      
+      doc.setFontSize(6);
+      doc.setTextColor(200, 200, 200);
+      doc.text("Scan QR code to verify receipt", 105, 270, { align: "center" });
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineWidth(0.5);
+      doc.rect(85, 255, 40, 40);
+      doc.text("QR Code", 105, 265, { align: "center" });
+      
+      const fileName = `Receipt_Cycle_${cycle.cycleNumber}_${recipientName.replace(/\s+/g, '_')}.pdf`;
+      doc.save(fileName);
+      
+      toast.dismiss();
+      toast.success(`Receipt for Cycle #${cycle.cycleNumber} downloaded!`);
+    } catch (error) {
+      console.error('Receipt generation error:', error);
+      toast.dismiss();
+      toast.error('Failed to generate receipt');
+    } finally {
+      setGeneratingReceipt(null);
+    }
+  };
+
   const getRecipientName = (cycle: any) => {
     if (!cycle) return "Unknown";
     
-    // Try to find the member from the members prop using snapshot data
     if (members.length > 0) {
       const winner = members.find(m => 
         m._id === cycle.recipientId || 
@@ -304,11 +610,10 @@ export default function CycleManagement({
       );
       
       if (winner) {
-        return winner.name || "Unknown"; // ✅ Use snapshot name
+        return winner.name || "Unknown"; 
       }
     }
     
-    // Fallback to existing logic
     return cycle.recipientName || cycle.recipientId?.name || "Unknown";
   };
 
@@ -334,7 +639,6 @@ export default function CycleManagement({
       case "upcoming":
         return "bg-accent/10 text-accent border-accent/20";
       case "skipped":
-
         return "bg-error/10 text-error border-error/20";
     }
   };
@@ -363,9 +667,6 @@ export default function CycleManagement({
     }
   };
 
-  // ✅ CHECK IF ALL CYCLES ARE COMPLETED
-  // We check if the number of actual cycles >= the group's total duration
-  // AND if the last cycle is marked as completed.
   const isGroupFullyCompleted = () => {
     if (groupDuration === 0) return false;
     if (cycles.length < groupDuration) return false;
@@ -375,7 +676,6 @@ export default function CycleManagement({
   };
 
   const shouldShowStartNextCycle = () => {
-    // If fully completed, do not show button
     if (isGroupFullyCompleted()) return false;
 
     const hasActiveCycle = cycles.some((c) => getCycleStatus(c) === "active");
@@ -395,7 +695,6 @@ export default function CycleManagement({
   };
 
   const shouldShowStartUpcomingCycle = () => {
-    // If fully completed, do not show button
     if (isGroupFullyCompleted()) return false;
 
     const hasActiveCycle = cycles.some((c) => getCycleStatus(c) === "active");
@@ -447,7 +746,6 @@ export default function CycleManagement({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col xs:flex-row xs:items-center justify-between gap-4">
         <div>
           <h2 className="text-lg md:text-xl font-bold text-text">
@@ -466,14 +764,27 @@ export default function CycleManagement({
           >
             <RefreshCw size={18} className="text-text/60" />
           </button>
-          <button className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm">
-            <Download size={16} />
-            <span className="hidden xs:inline">Export Schedule</span>
-          </button>
+          
+          {canManage && isGroupFullyCompleted() && (
+            <button 
+              onClick={handleExportSchedule}
+              disabled={generatingPDF}
+              className={`px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm transition-colors ${
+                generatingPDF ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+              title="Export complete cycle schedule as PDF"
+            >
+              {generatingPDF ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Download size={16} />
+              )}
+              <span className="hidden xs:inline">Export Schedule</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="card p-3 sm:p-4">
           <div className="flex items-center justify-between mb-2">
@@ -527,16 +838,13 @@ export default function CycleManagement({
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left Column - Cycles Timeline */}
         <div className="lg:flex-1">
           <div className="card">
             <div className="flex items-center justify-between mb-4 sm:mb-6">
               <h3 className="font-bold text-text text-lg">Cycles Timeline</h3>
 
-              {/* Action Buttons: Only visible if canManage is true */}
               {canManage && (
                 <>
-                  {/* Button 1: Start First Cycle (when no cycles exist) */}
                   {canStartFirstCycle() && (
                     <button
                       onClick={handleStartNextCycle}
@@ -552,7 +860,6 @@ export default function CycleManagement({
                     </button>
                   )}
 
-                  {/* Button 2: Start Next Cycle (after completing a cycle) */}
                   {shouldShowStartNextCycle() && (
                     <button
                       onClick={handleStartNextCycle}
@@ -568,7 +875,6 @@ export default function CycleManagement({
                     </button>
                   )}
 
-                  {/* Button 3: Start Upcoming Cycle (after skipping a cycle) */}
                   {shouldShowStartUpcomingCycle() && (
                     <button
                       onClick={handleStartUpcomingCycle}
@@ -591,7 +897,6 @@ export default function CycleManagement({
               {cycles.map((cycle) => {
                 const status = getCycleStatus(cycle);
                 const isProcessing = processing === cycle._id;
-                // ✅ FROM GEMINI'S UPDATE: Use snapshot data for recipient name
                 const recipientName = getRecipientName(cycle);
 
                 return (
@@ -634,7 +939,6 @@ export default function CycleManagement({
 
                         <div className="min-w-0">
                           <div className="font-medium truncate">
-                            {/* ✅ FROM GEMINI'S UPDATE: Use snapshot name */}
                             {recipientName}
                           </div>
                           <div className="text-xs sm:text-sm text-text/60">
@@ -682,7 +986,6 @@ export default function CycleManagement({
                       </div>
                     </div>
 
-                    {/* Action buttons inside the list: Only visible if canManage is true */}
                     {canManage && (
                       <>
                         {status === "skipped" ? (
@@ -762,10 +1065,8 @@ export default function CycleManagement({
               })}
             </div>
 
-            {/* ✅ SUCCESS MESSAGE: Replaces buttons when all cycles are done */}
             {isGroupFullyCompleted() && (
                 <div className="mt-8 mb-4 p-8 bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500">
-                    {/* Background decorations */}
                     <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
                     <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
 
@@ -782,7 +1083,6 @@ export default function CycleManagement({
                 </div>
             )}
 
-            {/* Bottom "Start Next Cycle" button: Only visible if canManage is true AND NOT COMPLETED */}
             {canManage && shouldShowStartNextCycle() && cycles.length > 0 && (
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <button
@@ -800,7 +1100,6 @@ export default function CycleManagement({
               </div>
             )}
 
-            {/* Bottom "Start Upcoming Cycle" button: Only visible if canManage is true AND NOT COMPLETED */}
             {canManage && shouldShowStartUpcomingCycle() && cycles.length > 0 && (
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <button
@@ -820,7 +1119,6 @@ export default function CycleManagement({
           </div>
         </div>
 
-        {/* Right Column - Selected Cycle Details */}
         <div className="lg:w-96 space-y-6">
           {selectedCycle ? (
             <div className="card">
@@ -832,7 +1130,6 @@ export default function CycleManagement({
                 <div>
                   <div className="text-sm text-text/60 mb-1">Recipient</div>
                   <div className="font-medium text-lg truncate">
-                    {/* ✅ FROM GEMINI'S UPDATE: Use snapshot data for recipient name */}
                     {getRecipientName(selectedCycle)}
                   </div>
                   <div className="text-sm text-text/60">
@@ -892,9 +1189,7 @@ export default function CycleManagement({
                   </div>
                 )}
 
-                {/* Action Buttons in Details Panel */}
                 <div className="pt-4 border-t border-gray-200">
-                  {/* Role Based Access: Only Leader can perform actions */}
                   {canManage && (
                     <>
                       {getCycleStatus(selectedCycle) === "active" && (
@@ -968,10 +1263,20 @@ export default function CycleManagement({
                     </>
                   )}
 
-                  {/* View Receipt is visible to ALL (Members, Leaders, Sub-Leaders) */}
-                  {getCycleStatus(selectedCycle) === "completed" && (
-                    <button className="w-full py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm sm:text-base">
-                      View Receipt
+                  {canManage && getCycleStatus(selectedCycle) === "completed" && (
+                    <button 
+                      onClick={() => handleGenerateReceipt(selectedCycle._id)}
+                      disabled={generatingReceipt === selectedCycle._id}
+                      className={`w-full py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm sm:text-base flex items-center justify-center gap-2 ${
+                        generatingReceipt === selectedCycle._id ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {generatingReceipt === selectedCycle._id ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <Receipt size={16} />
+                      )}
+                      Download Receipt
                     </button>
                   )}
                 </div>
@@ -987,7 +1292,6 @@ export default function CycleManagement({
             </div>
           )}
 
-          {/* Cycle Legend */}
           <div className="card">
             <h4 className="font-medium text-text mb-3">Cycle Status Legend</h4>
             <div className="grid grid-cols-2 gap-2">

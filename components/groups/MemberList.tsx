@@ -27,6 +27,7 @@ import {
   ArrowUpDown,
   Lock,
   EyeOff,
+  Trophy, // ✅ Imported Trophy for success message
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -55,6 +56,10 @@ export default function MemberList({
   const [showActionsMenu, setShowActionsMenu] = useState<string | null>(null);
   const [editingMember, setEditingMember] = useState<string | null>(null);
 
+  // ✅ NEW STATE: Track Group Completion
+  const [isGroupCompleted, setIsGroupCompleted] = useState(false);
+  const [groupName, setGroupName] = useState("Group");
+
   // Edit form state
   const [editFormData, setEditFormData] = useState({
     name: "",
@@ -80,8 +85,39 @@ export default function MemberList({
   useEffect(() => {
     if (groupId) {
       fetchMembers();
+      checkGroupStatus(); // ✅ Check completion status on load
     }
   }, [groupId]);
+
+  // ✅ NEW FUNCTION: Check if group is fully completed
+  const checkGroupStatus = async () => {
+    try {
+      // Fetch cycle data to determine if all cycles are done
+      const response = await fetch(`/api/groups/${groupId}/cycles?t=${Date.now()}`);
+      if (response.ok) {
+        const data = await response.json();
+        const cycles = data.cycles || [];
+        const totalDuration = data.totalDuration || 0;
+        
+        // Fetch group details for name
+        const groupRes = await fetch(`/api/groups/${groupId}`);
+        if(groupRes.ok) {
+            const groupData = await groupRes.json();
+            setGroupName(groupData.group?.name || "Group");
+        }
+
+        // Check completion logic
+        if (totalDuration > 0 && cycles.length >= totalDuration) {
+           const lastCycle = cycles[cycles.length - 1];
+           if (lastCycle && (lastCycle.isCompleted || lastCycle.status === 'completed')) {
+               setIsGroupCompleted(true);
+           }
+        }
+      }
+    } catch (error) {
+      console.error("Failed to check group status", error);
+    }
+  };
 
   const fetchMembers = async () => {
     try {
@@ -149,13 +185,13 @@ export default function MemberList({
     };
   }, []);
 
+  // ✅ LOGIC: If group is completed, revoke management permissions for UI
+  const effectiveCanManage = canManage && !isGroupCompleted;
+
   // ✅ FROM GEMINI'S UPDATE: Helper functions to get snapshot data
   const getMemberName = (member: any) => member.name || "Unknown Member";
-
   const getMemberEmail = (member: any) => member.email || "N/A";
-
   const getMemberPhone = (member: any) => member.phone || "N/A";
-
   const getMemberAvatar = (member: any) => member.userId?.avatar || null;
 
   // Identify Current User in List
@@ -178,20 +214,19 @@ export default function MemberList({
     return currentMember?.role; // 'leader', 'sub_leader', or 'member'
   };
 
-  // ✅ FIXED PERMISSION LOGIC: Sub-leaders can edit themselves (for personal info) and regular members
+  // ✅ FIXED PERMISSION LOGIC: Sub-leaders can edit themselves and regular members
   const canEditMember = (targetMember: any) => {
-    // 1. Basic check: Must have manage permissions
-    if (!canManage) return false;
+    // 1. Basic check: Must have manage permissions AND Group not completed
+    if (!effectiveCanManage) return false;
 
     const myRole = getCurrentUserRole();
     const targetRole = targetMember.role;
 
-    // 2. Leader can edit EVERYONE (including themselves, but delete is restricted in UI)
+    // 2. Leader can edit EVERYONE
     if (myRole === "leader") return true;
 
-    // 3. Sub-leader can edit themselves (for personal info) AND regular members
+    // 3. Sub-leader can edit themselves AND regular members
     if (myRole === "sub_leader") {
-      // Allow editing themselves OR regular members
       return isCurrentUser(targetMember) || targetRole === "member";
     }
 
@@ -200,7 +235,7 @@ export default function MemberList({
 
   // ✅ NEW FUNCTION: Check if user can delete a member
   const canDeleteMember = (targetMember: any) => {
-    if (!canManage) return false;
+    if (!effectiveCanManage) return false;
 
     const myRole = getCurrentUserRole();
     const targetRole = targetMember.role;
@@ -210,7 +245,7 @@ export default function MemberList({
       return !isCurrentUser(targetMember) && targetRole !== "leader";
     }
 
-    // Sub-leader can only delete regular members (not themselves, not other sub-leaders, not leaders)
+    // Sub-leader can only delete regular members
     if (myRole === "sub_leader") {
       return targetRole === "member" && !isCurrentUser(targetMember);
     }
@@ -220,7 +255,7 @@ export default function MemberList({
 
   // ✅ NEW FUNCTION: Check if user can change role of a member
   const canChangeRole = (targetMember: any) => {
-    if (!canManage) return false;
+    if (!effectiveCanManage) return false;
 
     const myRole = getCurrentUserRole();
     const targetRole = targetMember.role;
@@ -235,7 +270,7 @@ export default function MemberList({
 
   // ✅ NEW FUNCTION: Check if user has ANY action available for this member
   const hasAnyAction = (targetMember: any) => {
-    if (!canManage) return false;
+    if (!effectiveCanManage) return false;
     return (
       canEditMember(targetMember) ||
       canDeleteMember(targetMember) ||
@@ -244,7 +279,6 @@ export default function MemberList({
   };
 
   const filteredMembers = members.filter((member) => {
-    // ✅ FROM GEMINI'S UPDATE: Use snapshot data for filtering
     const name = getMemberName(member).toLowerCase();
     const email = getMemberEmail(member).toLowerCase();
     const phone = getMemberPhone(member);
@@ -305,11 +339,9 @@ export default function MemberList({
     }
   };
 
-  // Handle edit member
   const handleEditMember = (memberId: string) => {
     const member = members.find((m) => m._id === memberId);
     if (member) {
-      // ✅ FROM GEMINI'S UPDATE: Use snapshot data
       setEditFormData({
         name: getMemberName(member),
         email: getMemberEmail(member),
@@ -320,11 +352,9 @@ export default function MemberList({
     }
   };
 
-  // Handle update member details
   const handleUpdateMember = async () => {
     if (!editingMember) return;
 
-    // ✅ CHECK: Only Name and Phone are required now (Email is disabled)
     if (!editFormData.name || !editFormData.phone) {
       toast.error("Name and Phone are required");
       return;
@@ -340,11 +370,9 @@ export default function MemberList({
             "Content-Type": "application/json",
           },
           credentials: "include",
-          // ✅ CHANGE: Send only name and phone. Do not send email.
           body: JSON.stringify({
             name: editFormData.name,
             phone: editFormData.phone,
-            // email: editFormData.email <--- REMOVED THIS
           }),
         }
       );
@@ -364,7 +392,6 @@ export default function MemberList({
     }
   };
 
-  // Role Change Logic
   const handleRoleChange = async (
     memberId: string,
     newRole: "leader" | "sub_leader" | "member"
@@ -448,7 +475,6 @@ export default function MemberList({
     }
   };
 
-  // Handle draw number change
   const handleDrawNumberChange = (memberId: string, value: string) => {
     const num = parseInt(value);
     if (isNaN(num) || num < 1) return;
@@ -458,7 +484,6 @@ export default function MemberList({
     );
   };
 
-  // Save reordered draw numbers
   const handleSaveOrder = async () => {
     const numbers = members.map((m) => m.memberNumber);
     const uniqueNumbers = new Set(numbers);
@@ -593,6 +618,25 @@ export default function MemberList({
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* ✅ SUCCESS MESSAGE: Shows if group is completed */}
+      {isGroupCompleted && (
+        <div className="mb-4 p-8 bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500">
+            {/* Background decorations */}
+            <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
+            <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
+
+            <div className="relative z-10 flex flex-col items-center">
+                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-md mb-4 animate-bounce">
+                    <Trophy className="text-yellow-500 w-8 h-8" fill="currentColor" />
+                </div>
+                <h3 className="text-2xl font-bold text-green-800 mb-2">Group Successfully Completed!</h3>
+                <p className="text-green-700 max-w-md mx-auto">
+                    Total cycles of this "{groupName}" group are completed. All members have received their total monies.
+                </p>
+            </div>
+        </div>
+      )}
+
       {/* Header with Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
@@ -603,8 +647,8 @@ export default function MemberList({
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-          {/* HIDE Reorder Button if !canManage */}
-          {canManage && (
+          {/* HIDE Reorder Button if !effectiveCanManage */}
+          {effectiveCanManage && (
             <>
               {isReordering ? (
                 <div className="flex items-center gap-2">
@@ -685,8 +729,8 @@ export default function MemberList({
             />
           </div>
 
-          {/* HIDE Add Member Button if !canManage */}
-          {canManage && (
+          {/* HIDE Add Member Button if !effectiveCanManage */}
+          {effectiveCanManage && (
             <button
               onClick={() => setShowAddMember(true)}
               className="bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap"
@@ -1004,8 +1048,8 @@ export default function MemberList({
                   >
                     <td className="py-4 px-6">
                       <div className="flex flex-col items-center">
-                        {isReordering && canManage ? (
-                          // Editable Draw Number (Only if canManage)
+                        {isReordering && effectiveCanManage ? (
+                          // Editable Draw Number (Only if effectiveCanManage)
                           <div className="relative">
                             <input
                               type="number"
@@ -1080,13 +1124,13 @@ export default function MemberList({
                                       "w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-primary/10";
                                     // ✅ FROM GEMINI'S UPDATE: Use snapshot name for initials
                                     fallback.innerHTML = `<span class="font-bold text-primary text-lg">
-                                  ${(getMemberName(member) || "UN")
-                                    .split(" ")
-                                    .map((n: string) => n[0])
-                                    .join("")
-                                    .toUpperCase()
-                                    .slice(0, 2)}
-                                </span>`;
+                                    ${(getMemberName(member) || "UN")
+                                      .split(" ")
+                                      .map((n: string) => n[0])
+                                      .join("")
+                                      .toUpperCase()
+                                      .slice(0, 2)}
+                                  </span>`;
                                     parent.appendChild(fallback);
                                   }
                                 }}
@@ -1369,7 +1413,7 @@ export default function MemberList({
 
                       {/* Draw Number Badge - Mobile */}
                       <div className="flex items-center gap-2 mb-2">
-                        {isReordering && canManage ? (
+                        {isReordering && effectiveCanManage ? (
                           <div className="relative">
                             <input
                               type="number"
@@ -1381,12 +1425,12 @@ export default function MemberList({
                                   e.target.value
                                 )
                               }
-                              onClick={(e) => e.stopPropagation()}
                               className={`w-16 h-8 text-center border-2 rounded-lg font-bold focus:outline-none focus:ring-2 ${
                                 isLocked
                                   ? "bg-gray-100 text-gray-400 border-gray-300 cursor-not-allowed"
                                   : "border-primary text-primary focus:ring-primary/30"
                               }`}
+                              onClick={(e) => e.stopPropagation()}
                               disabled={isLocked}
                             />
                             {isLocked && (
@@ -1500,7 +1544,7 @@ export default function MemberList({
                   )}
 
                   {/* Show actions only if user has permission, otherwise show Read Only */}
-                  {canManage && !isReordering ? (
+                  {effectiveCanManage && !isReordering ? (
                     userHasActions ? (
                       <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-gray-200">
                         {/* Show role dropdown only if user can change roles */}
@@ -1559,7 +1603,7 @@ export default function MemberList({
                       </div>
                     )
                   ) : (
-                    !canManage && (
+                    !effectiveCanManage && (
                       <div className="flex items-center justify-center gap-2 py-2.5 bg-gray-100 rounded-lg text-gray-600">
                         <EyeOff size={16} className="text-gray-400" />
                         <span className="text-sm font-medium">Read Only</span>
@@ -1584,8 +1628,8 @@ export default function MemberList({
               ? "Try adjusting your search or filter"
               : "Add your first member to get started"}
           </p>
-          {/* HIDE Empty State Add Button if !canManage */}
-          {canManage && (
+          {/* HIDE Empty State Add Button if !effectiveCanManage */}
+          {effectiveCanManage && (
             <button
               onClick={() => {
                 setShowAddMember(true);

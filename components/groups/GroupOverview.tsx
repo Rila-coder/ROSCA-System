@@ -21,6 +21,7 @@ import {
   PauseCircle,
   Hash,
   EyeOff,
+  Trophy, // ✅ Imported Trophy icon
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -141,6 +142,9 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
   const [totalCollected, setTotalCollected] = useState(0);
   const [activeCyclePayments, setActiveCyclePayments] = useState<any[]>([]);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  
+  // ✅ NEW: Track group completion status
+  const [isGroupCompleted, setIsGroupCompleted] = useState(false);
 
   // --- PERMISSION LOGIC (FIXED) ---
   const currentUserId = user?.id || (user as any)?._id;
@@ -198,6 +202,12 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
       setUpcomingDraws(data.upcomingDraws || []);
       setMemberCount(apiMemberCount);
       setTotalCollected(apiTotalCollected);
+      
+      // ✅ Set Group Completion Status
+      if(data.isGroupCompleted !== undefined) {
+          setIsGroupCompleted(data.isGroupCompleted);
+      }
+      
       setLastRefreshed(new Date());
     } catch (error: any) {
       console.error("❌ Error fetching overview data:", error);
@@ -839,6 +849,26 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
         </div>
       );
     } else if (!hasActiveCycle()) {
+      // ✅ SUCCESS MESSAGE IF GROUP IS COMPLETED
+      if (isGroupCompleted) {
+        return (
+            <div className="mb-6 p-8 bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500">
+                <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
+                <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
+
+                <div className="relative z-10 flex flex-col items-center">
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-md mb-4 animate-bounce">
+                        <Trophy className="text-yellow-500 w-8 h-8" fill="currentColor" />
+                    </div>
+                    <h3 className="text-2xl font-bold text-green-800 mb-2">Group Successfully Completed!</h3>
+                    <p className="text-green-700 max-w-md mx-auto">
+                         Total cycles of this "{group.name}" group are completed. So group members cycles and payments are completed.
+                    </p>
+                </div>
+            </div>
+        );
+      }
+
       if (lastCycleStatus === "skipped") {
         return (
           <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
@@ -932,18 +962,18 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
     },
     {
       title: "Active Cycle",
-      value: hasActiveCycle() ? `Cycle #${activeCycle.cycleNumber}` : "None",
-      change: hasActiveCycle()
-        ? `${activeCycle.recipientName || "Not assigned"} to receive`
-        : "No active cycle",
-      trend: hasActiveCycle() ? "up" : "neutral",
+      value: isGroupCompleted ? "Completed" : (hasActiveCycle() ? `Cycle #${activeCycle.cycleNumber}` : "None"),
+      change: isGroupCompleted 
+        ? "All finished" 
+        : (hasActiveCycle() ? `${activeCycle.recipientName || "Not assigned"} to receive` : "No active cycle"),
+      trend: hasActiveCycle() || isGroupCompleted ? "up" : "neutral",
       icon: <Hash className="text-accent" size={20} />,
     },
     {
       title: "Completion Rate",
-      value: `${stats.completionRate}%`,
+      value: isGroupCompleted ? "100%" : `${stats.completionRate}%`,
       change: stats.completionRate > 0 ? "+3% from last" : "No data",
-      trend: stats.completionRate > 0 ? "up" : "neutral",
+      trend: stats.completionRate > 0 || isGroupCompleted ? "up" : "neutral",
       icon: <TrendingUp className="text-secondary" size={20} />,
     },
   ];
@@ -1026,213 +1056,217 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Updated Payment Trends with Pie Chart */}
+        
+        {/* Left Column - Payment Trends OR Completed Message */}
         <div className="lg:col-span-2">
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-3">
-              <div>
-                <h3 className="text-lg font-bold text-text">Payment Trends</h3>
-                <p className="text-text/60 text-sm">
-                  {hasActiveCycle()
-                    ? `Cycle #${activeCycle.cycleNumber} Analysis`
-                    : "Payment status overview"}
-                </p>
-              </div>
-              {/* Download button visible to ALL users */}
-              <button
-                onClick={handleGeneratePDFReport}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors text-sm font-medium w-full sm:w-auto"
-                title="Download PDF Report"
-              >
-                <Download size={16} />
-                Download Report
-              </button>
-            </div>
-
-            <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-8">
-              {/* Pie Chart Section */}
-              <div className="flex-1 w-full">
-                <div className="mb-4 text-center">
-                  <h4 className="font-semibold text-text mb-2">
-                    Payment Distribution
-                  </h4>
-                  {hasActiveCycle() && (
-                    <p className="text-sm text-text/60">
-                      Cycle #{activeCycle.cycleNumber}
+          {/* ✅ HIDE THIS IF GROUP COMPLETED */}
+          {!isGroupCompleted && (
+              <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-text">Payment Trends</h3>
+                    <p className="text-text/60 text-sm">
+                      {hasActiveCycle()
+                        ? `Cycle #${activeCycle.cycleNumber} Analysis`
+                        : "Payment status overview"}
                     </p>
-                  )}
+                  </div>
+                  {/* Download button visible to ALL users - HIDDEN IF COMPLETED */}
+                  <button
+                    onClick={handleGeneratePDFReport}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors text-sm font-medium w-full sm:w-auto"
+                    title="Download PDF Report"
+                  >
+                    <Download size={16} />
+                    Download Report
+                  </button>
                 </div>
 
-                <div className="flex justify-center">
-                  <PaymentPieChart data={paymentStats} />
-                </div>
-
-                {/* Legend */}
-                <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-6">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-success shrink-0"></div>
-                    <span className="text-sm text-text/60">
-                      Paid ({paymentStats.paid})
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-accent shrink-0"></div>
-                    <span className="text-sm text-text/60">
-                      Pending ({paymentStats.pending})
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-error shrink-0"></div>
-                    <span className="text-sm text-text/60">
-                      Late ({paymentStats.late})
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Statistics Section */}
-              <div className="flex-1 w-full">
-                <div className="space-y-4">
-                  <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
-                    <div className="text-sm font-medium text-primary mb-2">
-                      Cycle Summary
-                    </div>
-                    <div className="text-xs text-primary/70 space-y-1">
-                      {hasActiveCycle() ? (
-                        <>
-                          <div className="flex justify-between">
-                            <span>Cycle:</span>
-                            <span className="font-semibold">
-                              #{activeCycle.cycleNumber}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Recipient:</span>
-                            <span className="font-semibold truncate max-w-[150px]">
-                              {activeCycle.recipientName || "Not assigned"}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Due:</span>
-                            <span className="font-semibold">
-                              {activeCycle.dueDate
-                                ? formatDate(activeCycle.dueDate)
-                                : "Not set"}
-                            </span>
-                          </div>
-                        </>
-                      ) : (
-                        <div>No active cycle</div>
+                <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-8">
+                  {/* Pie Chart Section */}
+                  <div className="flex-1 w-full">
+                    <div className="mb-4 text-center">
+                      <h4 className="font-semibold text-text mb-2">
+                        Payment Distribution
+                      </h4>
+                      {hasActiveCycle() && (
+                        <p className="text-sm text-text/60">
+                          Cycle #{activeCycle.cycleNumber}
+                        </p>
                       )}
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-3 gap-2 sm:gap-4">
-                    <div className="text-center p-2 sm:p-3 bg-success/10 rounded-lg border border-success/20">
-                      <div className="text-xl sm:text-2xl font-bold text-success mb-1">
-                        {paymentStats.paid}
-                      </div>
-                      <div className="text-[10px] sm:text-xs text-success font-medium">
-                        Paid
-                      </div>
-                      <div className="text-[10px] sm:text-xs text-success/70 mt-1">
-                        {paymentStats.total > 0
-                          ? (
-                              (paymentStats.paid / paymentStats.total) *
-                              100
-                            ).toFixed(0)
-                          : 0}
-                        %
-                      </div>
+                    <div className="flex justify-center">
+                      <PaymentPieChart data={paymentStats} />
                     </div>
-                    <div className="text-center p-2 sm:p-3 bg-accent/10 rounded-lg border border-accent/20">
-                      <div className="text-xl sm:text-2xl font-bold text-accent mb-1">
-                        {paymentStats.pending}
+
+                    {/* Legend */}
+                    <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-6">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-success shrink-0"></div>
+                        <span className="text-sm text-text/60">
+                          Paid ({paymentStats.paid})
+                        </span>
                       </div>
-                      <div className="text-[10px] sm:text-xs text-accent font-medium">
-                        Pending
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-accent shrink-0"></div>
+                        <span className="text-sm text-text/60">
+                          Pending ({paymentStats.pending})
+                        </span>
                       </div>
-                      <div className="text-[10px] sm:text-xs text-accent/70 mt-1">
-                        {paymentStats.total > 0
-                          ? (
-                              (paymentStats.pending / paymentStats.total) *
-                              100
-                            ).toFixed(0)
-                          : 0}
-                        %
-                      </div>
-                    </div>
-                    <div className="text-center p-2 sm:p-3 bg-error/10 rounded-lg border border-error/20">
-                      <div className="text-xl sm:text-2xl font-bold text-error mb-1">
-                        {paymentStats.late}
-                      </div>
-                      <div className="text-[10px] sm:text-xs text-error font-medium">
-                        Late
-                      </div>
-                      <div className="text-[10px] sm:text-xs text-error/70 mt-1">
-                        {paymentStats.total > 0
-                          ? (
-                              (paymentStats.late / paymentStats.total) *
-                              100
-                            ).toFixed(0)
-                          : 0}
-                        %
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-error shrink-0"></div>
+                        <span className="text-sm text-text/60">
+                          Late ({paymentStats.late})
+                        </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    <div className="text-sm font-medium text-text mb-2">
-                      Collection Progress
+                  {/* Statistics Section */}
+                  <div className="flex-1 w-full">
+                    <div className="space-y-4">
+                      <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
+                        <div className="text-sm font-medium text-primary mb-2">
+                          Cycle Summary
+                        </div>
+                        <div className="text-xs text-primary/70 space-y-1">
+                          {hasActiveCycle() ? (
+                            <>
+                              <div className="flex justify-between">
+                                <span>Cycle:</span>
+                                <span className="font-semibold">
+                                  #{activeCycle.cycleNumber}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Recipient:</span>
+                                <span className="font-semibold truncate max-w-[150px]">
+                                  {activeCycle.recipientName || "Not assigned"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Due:</span>
+                                <span className="font-semibold">
+                                  {activeCycle.dueDate
+                                    ? formatDate(activeCycle.dueDate)
+                                    : "Not set"}
+                                </span>
+                              </div>
+                            </>
+                          ) : (
+                            <div>No active cycle</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                        <div className="text-center p-2 sm:p-3 bg-success/10 rounded-lg border border-success/20">
+                          <div className="text-xl sm:text-2xl font-bold text-success mb-1">
+                            {paymentStats.paid}
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-success font-medium">
+                            Paid
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-success/70 mt-1">
+                            {paymentStats.total > 0
+                              ? (
+                                  (paymentStats.paid / paymentStats.total) *
+                                  100
+                                ).toFixed(0)
+                              : 0}
+                            %
+                          </div>
+                        </div>
+                        <div className="text-center p-2 sm:p-3 bg-accent/10 rounded-lg border border-accent/20">
+                          <div className="text-xl sm:text-2xl font-bold text-accent mb-1">
+                            {paymentStats.pending}
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-accent font-medium">
+                            Pending
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-accent/70 mt-1">
+                            {paymentStats.total > 0
+                              ? (
+                                  (paymentStats.pending / paymentStats.total) *
+                                  100
+                                ).toFixed(0)
+                              : 0}
+                            %
+                          </div>
+                        </div>
+                        <div className="text-center p-2 sm:p-3 bg-error/10 rounded-lg border border-error/20">
+                          <div className="text-xl sm:text-2xl font-bold text-error mb-1">
+                            {paymentStats.late}
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-error font-medium">
+                            Late
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-error/70 mt-1">
+                            {paymentStats.total > 0
+                              ? (
+                                  (paymentStats.late / paymentStats.total) *
+                                  100
+                                ).toFixed(0)
+                              : 0}
+                            %
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <div className="text-sm font-medium text-text mb-2">
+                          Collection Progress
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                          <div
+                            className="bg-success h-2.5 rounded-full transition-all duration-500"
+                            style={{
+                              width: `${
+                                paymentStats.total > 0
+                                  ? (paymentStats.paid / paymentStats.total) * 100
+                                  : 0
+                              }%`,
+                            }}
+                          ></div>
+                        </div>
+                        <div className="flex justify-between text-[10px] sm:text-xs text-text/60 mt-2">
+                          <span>Col: {paymentStats.paid}</span>
+                          <span>
+                            Rem: {paymentStats.pending + paymentStats.late}
+                          </span>
+                          <span>Tot: {paymentStats.total}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2.5">
-                      <div
-                        className="bg-success h-2.5 rounded-full transition-all duration-500"
-                        style={{
-                          width: `${
-                            paymentStats.total > 0
-                              ? (paymentStats.paid / paymentStats.total) * 100
-                              : 0
-                          }%`,
-                        }}
-                      ></div>
-                    </div>
-                    <div className="flex justify-between text-[10px] sm:text-xs text-text/60 mt-2">
-                      <span>Col: {paymentStats.paid}</span>
-                      <span>
-                        Rem: {paymentStats.pending + paymentStats.late}
-                      </span>
-                      <span>Tot: {paymentStats.total}</span>
+                  </div>
+                </div>
+
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <div className="text-sm text-text/60">
+                    <p className="mb-2 font-medium">📊 Report Includes:</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pl-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-1 h-1 bg-text/60 rounded-full"></span>
+                        Group summary
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-1 h-1 bg-text/60 rounded-full"></span>
+                        Payment charts
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-1 h-1 bg-text/60 rounded-full"></span>
+                        Status breakdown
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-1 h-1 bg-text/60 rounded-full"></span>
+                        Active cycle info
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <div className="text-sm text-text/60">
-                <p className="mb-2 font-medium">📊 Report Includes:</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pl-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-1 h-1 bg-text/60 rounded-full"></span>
-                    Group summary
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-1 h-1 bg-text/60 rounded-full"></span>
-                    Payment charts
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-1 h-1 bg-text/60 rounded-full"></span>
-                    Status breakdown
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-1 h-1 bg-text/60 rounded-full"></span>
-                    Active cycle info
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Right Column - Upcoming Draws */}
@@ -1241,15 +1275,24 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-text">Upcoming Draws</h3>
-              <Link
-                href={`/groups/${group._id}?tab=cycles`}
-                className="text-primary hover:text-primary-dark hover:underline text-sm font-medium transition-colors"
-              >
-                View All →
-              </Link>
+              {!isGroupCompleted && (
+                  <Link
+                    href={`/groups/${group._id}?tab=cycles`}
+                    className="text-primary hover:text-primary-dark hover:underline text-sm font-medium transition-colors"
+                  >
+                    View All →
+                  </Link>
+              )}
             </div>
             <div className="space-y-3">
-              {upcomingDraws.length > 0 ? (
+              {/* ✅ IF COMPLETED, SHOW MESSAGE HERE */}
+              {isGroupCompleted ? (
+                <div className="p-4 text-center text-green-700 bg-green-50 rounded-lg">
+                    <CheckCircle className="mx-auto mb-2 text-green-500" size={24} />
+                    <p className="font-medium">Total cycles completed</p>
+                    <p className="text-xs mt-1 text-green-600">No more upcoming draws</p>
+                </div>
+              ) : upcomingDraws.length > 0 ? (
                 upcomingDraws.map((draw) => (
                   <div
                     key={draw._id}
@@ -1300,7 +1343,8 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
       </div>
 
       {/* 🔒 Recent Payments - SMART RESPONSIVE TABLE (Cards on mobile, Table on Desktop) */}
-      {hasActiveCycle() && (
+      {/* ✅ HIDE IF COMPLETED */}
+      {!isGroupCompleted && hasActiveCycle() && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 sm:mb-6 gap-2">
             <div>
@@ -1411,9 +1455,7 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
                             {payment.status === "paid" ? (
                               canViewThisReceipt ? (
                                 <button
-                                  onClick={() =>
-                                    handleDownloadReceipt(payment._id)
-                                  }
+                                  onClick={() => handleDownloadReceipt(payment._id)}
                                   className="px-3 py-1 bg-blue-100 text-blue-600 rounded text-sm hover:bg-blue-200 transition-colors flex items-center gap-1"
                                 >
                                   <Download size={12} />
@@ -1555,28 +1597,6 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
               </button>
             </div>
           )}
-        </div>
-      )}
-
-      {/* 🔒 Show message if no active cycle (instead of payments table) */}
-      {!hasActiveCycle() && cycles.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-          <PauseCircle size={48} className="mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-semibold text-text mb-2">
-            Payments Temporarily Disabled
-          </h3>
-          <p className="text-text/60 mb-4 max-w-md mx-auto">
-            Payments can only be tracked and managed when there's an active
-            cycle. Please start or activate a cycle to continue collecting
-            payments.
-          </p>
-          <Link
-            href={`/groups/${group._id}?tab=cycles`}
-            className="inline-flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors text-sm font-medium"
-          >
-            <PlayCircle size={16} />
-            Go to Cycle Management
-          </Link>
         </div>
       )}
     </div>

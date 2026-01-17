@@ -302,7 +302,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
   // ✅ State to track internal role - with improved detection
   const [userRole, setUserRole] = useState<'leader' | 'sub_leader' | 'member'>('member');
   
-  // ✅ NEW STATE: Track Group Status
+  // ✅ NEW STATE: Track Group Status (FROM SECOND CODE)
   const [isGroupCompleted, setIsGroupCompleted] = useState(false);
   const [groupName, setGroupName] = useState('Group');
   
@@ -394,7 +394,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
       setCurrentCycle(data.currentCycle);
       setPayments(data.payments || []);
       
-      // ✅ SAVE GROUP INFO
+      // ✅ SAVE GROUP INFO (FROM SECOND CODE)
       if (data.groupName) setGroupName(data.groupName);
       if (data.isGroupCompleted !== undefined) setIsGroupCompleted(data.isGroupCompleted);
 
@@ -1148,7 +1148,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
   };
 
   const getCycleStatusMessage = () => {
-    // ✅ CRITICAL CHECK: If Group is fully completed, return special message
+    // ✅ CRITICAL CHECK: If Group is fully completed, return special message (FROM SECOND CODE)
     if (isGroupCompleted) {
         return {
             title: "All Cycles Completed",
@@ -1259,20 +1259,29 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
             >
               <RefreshCw size={18} className="text-text/60" />
             </button>
-            {/* ✅ Export Button: Visible to Leader & Sub-leader */}
+            {/* ✅ Export Button: Visible to Leader & Sub-leader, disabled when group completed (FROM SECOND CODE) */}
             {canExportReport && (
               <button 
                 onClick={handleGenerateGeneralReportPDF}
-                disabled={generatingPDF}
-                className="flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+                disabled={generatingPDF || isGroupCompleted}
+                title={isGroupCompleted ? "All cycles completed. No payment data to export." : "Export payment report as PDF"}
+                className={`flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg transition-colors text-sm font-medium ${
+                  generatingPDF || isGroupCompleted 
+                    ? 'opacity-50 cursor-not-allowed bg-gray-100 text-gray-400' 
+                    : 'hover:bg-gray-50 text-text'
+                }`}
               >
                 {generatingPDF ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <Download size={16} />
                 )}
-                <span className="hidden sm:inline">Export Report</span>
-                <span className="sm:hidden">Export</span>
+                <span className="hidden sm:inline">
+                  {isGroupCompleted ? 'Group Completed' : 'Export Report'}
+                </span>
+                <span className="sm:hidden">
+                  {isGroupCompleted ? 'Completed' : 'Export'}
+                </span>
               </button>
             )}
           </div>
@@ -1376,28 +1385,36 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
             <RefreshCw size={18} className="text-text/60" />
           </button>
           
-          {/* ✅ Export Button: Visible to Leader & Sub-leader */}
+          {/* ✅ Export Button: Visible to Leader & Sub-leader, disabled when group completed (FROM SECOND CODE) */}
           {canExportReport && (
             <button 
               onClick={handleGenerateGeneralReportPDF}
-              disabled={generatingPDF}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+              disabled={generatingPDF || isGroupCompleted}
+              title={isGroupCompleted ? "All cycles completed. No payment data to export." : "Export payment report as PDF"}
+              className={`flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg transition-colors text-sm font-medium ${
+                generatingPDF || isGroupCompleted 
+                  ? 'opacity-50 cursor-not-allowed bg-gray-100 text-gray-400' 
+                  : 'hover:bg-gray-50 text-text'
+              }`}
             >
               {generatingPDF ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Download size={16} />
               )}
-              <span className="hidden sm:inline">Export Report</span>
-              <span className="sm:hidden">Export</span>
+              <span className="hidden sm:inline">
+                {isGroupCompleted ? 'Group Completed' : 'Export Report'}
+              </span>
+              <span className="sm:hidden">
+                {isGroupCompleted ? 'Completed' : 'Export'}
+              </span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Rest of the UI remains the same... */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* ... (Existing stats cards code) ... */}
         <div className="bg-white p-4 rounded-xl border border-gray-200">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm font-medium text-text">Total</div>
@@ -1806,6 +1823,55 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
                           {amILeader ? (
                             // LEADER VIEW: Full Actions
                             <>
+                              {payment.status !== 'paid' ? (
+                                <>
+                                  <button
+                                    onClick={() => handleMarkAsPaid(payment._id)}
+                                    disabled={processingPayment === payment._id}
+                                    className="p-2 bg-success/10 hover:bg-success/20 rounded-lg transition-colors disabled:opacity-50 text-success"
+                                    title="Mark as Paid"
+                                  >
+                                    {processingPayment === payment._id ? (
+                                      <Loader2 size={18} className="animate-spin" />
+                                    ) : (
+                                      <CheckCircle size={18} />
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={() => handleSendReminder(payment._id)}
+                                    disabled={processingPayment === payment._id}
+                                    className="p-2 bg-accent/10 hover:bg-accent/20 rounded-lg transition-colors disabled:opacity-50 text-accent"
+                                    title="Send Reminder"
+                                  >
+                                    <Send size={18} />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handleDownloadReceipt(payment._id)}
+                                    disabled={processingPayment === payment._id}
+                                    className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50 text-blue-600"
+                                    title="Download Receipt"
+                                  >
+                                    {processingPayment === payment._id ? (
+                                      <Loader2 size={18} className="animate-spin" />
+                                    ) : (
+                                      <Download size={18} />
+                                    )}
+                                  </button>
+                                  
+                                  <button
+                                    onClick={() => handleMarkAsUnpaid(payment._id)}
+                                    disabled={processingPayment === payment._id}
+                                    className="p-2 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors disabled:opacity-50 text-orange-600"
+                                    title="Mark as Unpaid"
+                                  >
+                                    <RotateCcw size={18} />
+                                  </button>
+                                </>
+                              )}
+                              
                               <div className="relative">
                                 <button
                                   onClick={(e) => toggleActionsMenu(e, payment._id)}
@@ -1921,7 +1987,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
       </div>
 
       {/* Grid of Action Cards at Bottom - Leader Only */}
-      {amILeader && (
+      {amILeader && !isGroupCompleted && ( // ✅ Also hide action cards when group is completed (FROM SECOND CODE)
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           <button 
             onClick={() => {
