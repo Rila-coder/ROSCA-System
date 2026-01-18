@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { 
   CheckCircle, Clock, Smartphone, Download, 
   Edit, Trash2, Building, Layers, Save, X, RotateCcw,
-  FileText, DollarSign, AlertCircle, Percent, Eye
+  FileText, DollarSign, AlertCircle, Percent, Eye, Trophy, PauseCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { jsPDF } from 'jspdf';
@@ -342,7 +342,7 @@ export default function PaymentsTable({ groups, currentUserId, onUpdate }: Props
     }
   };
 
-  // Calculate group statistics
+  // Calculate group statistics (FIXED: Skip counting skipped cycles)
   const calculateGroupStats = (group: any) => {
     let totalCollected = 0;
     let totalPending = 0;
@@ -351,6 +351,9 @@ export default function PaymentsTable({ groups, currentUserId, onUpdate }: Props
     let totalCount = 0;
     
     group.cycles.forEach((cycle: any) => {
+      // ✅ Skip counting skipped cycles in totals
+      if (cycle.isSkipped) return;
+
       cycle.payments.forEach((p: any) => {
         totalCount++;
         if (p.status === 'paid') {
@@ -383,6 +386,8 @@ export default function PaymentsTable({ groups, currentUserId, onUpdate }: Props
     <div className="space-y-4 md:space-y-6 lg:space-y-8">
       {groups.map((group) => {
         const stats = calculateGroupStats(group);
+        // ✅ Check if Group is Completed (from Gemini update)
+        const isGroupCompleted = group.isGroupCompleted;
         
         return (
           <div key={group.groupId} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
@@ -402,7 +407,15 @@ export default function PaymentsTable({ groups, currentUserId, onUpdate }: Props
                   </div>
                 </div>
                 <div>
-                  <h2 className="text-base md:text-lg lg:text-xl font-bold text-gray-900">{group.groupName}</h2>
+                  <h2 className="text-base md:text-lg lg:text-xl font-bold text-gray-900 flex items-center gap-2">
+                    {group.groupName}
+                    {/* ✅ Show Trophy if Completed (from Gemini update) */}
+                    {isGroupCompleted && (
+                      <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs flex items-center gap-1 border border-green-200">
+                        <Trophy size={12} /> Completed
+                      </span>
+                    )}
+                  </h2>
                   <div className="flex items-center gap-1 md:gap-2 mt-0.5">
                     <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Your Role:</span>
                     <span className={`text-xs px-1.5 md:px-2 py-0.5 rounded font-bold uppercase ${
@@ -434,7 +447,14 @@ export default function PaymentsTable({ groups, currentUserId, onUpdate }: Props
               </div>
             </div>
 
-            {/* PAYMENTS LIST - Moved above the statistics */}
+            {/* ✅ Show Message if Group is Completed (from Gemini update) */}
+            {isGroupCompleted && (
+              <div className="bg-green-50 border-b border-green-100 p-3 text-center text-sm text-green-800 font-medium">
+                🎉 This group has completed all cycles. Payments are now locked.
+              </div>
+            )}
+
+            {/* PAYMENTS LIST */}
             <div className="p-0">
               {group.cycles.map((cycle: any) => (
                 <div key={cycle.cycleNumber} className="border-b border-gray-100 last:border-0">
@@ -449,263 +469,278 @@ export default function PaymentsTable({ groups, currentUserId, onUpdate }: Props
                         <Layers size={14} className="text-slate-700" />
                       </div>
                     </div>
-                    <span className="font-bold text-slate-800 text-xs md:text-sm uppercase tracking-wider">
+                    <span className="font-bold text-slate-800 text-xs md:text-sm uppercase tracking-wider flex items-center gap-2">
                       Cycle #{cycle.cycleNumber}
+                      {/* ✅ Show Skipped Tag (from Gemini update) */}
+                      {cycle.isSkipped && (
+                        <span className="bg-red-100 text-red-600 px-2 py-0.5 rounded text-xs border border-red-200">
+                          SKIPPED
+                        </span>
+                      )}
                     </span>
                   </div>
 
-                  {/* 3. Table Container with Custom Scrollbar */}
-                  <div className="overflow-x-auto [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
-                    <table className="w-full text-left min-w-[480px] md:min-w-[640px]">
-                      <thead>
-                        <tr className="text-xs text-gray-500 bg-white border-b border-gray-100">
-                          {/* Dense padding on mobile */}
-                          <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider">Member</th>
-                          <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider hidden sm:table-cell">Amount</th>
-                          <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider">Status</th>
-                          <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider hidden md:table-cell">Method</th>
-                          <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-sm divide-y divide-gray-50">
-                        {cycle.payments.map((p: any) => {
-                          const isMe = p.userId === currentUserId;
-                          const isLeader = group.myRole === 'leader';
-                          const isSubLeader = group.myRole === 'sub_leader';
-                          
-                          // Check if this row should have any action buttons
-                          const hasActions = isLeader || (isMe && p.status === 'paid');
-                          
-                          return (
-                            <tr key={p.id} className={`transition-colors ${isMe ? 'bg-blue-50/40' : 'hover:bg-gray-50'}`}>
-                              
-                              {/* Member Name */}
-                              <td className="px-3 py-2.5 md:px-4 md:py-4 lg:px-6">
-                                <div className="flex flex-col">
-                                  <div className="flex items-center gap-1 md:gap-2">
-                                    <span className={`font-semibold text-xs md:text-sm lg:text-base ${isMe ? 'text-[#1e3a8a]' : 'text-gray-900'}`}>
-                                      {p.memberName}
-                                    </span>
-                                    {isMe && (
-                                      <span className="text-[9px] md:text-[10px] font-extrabold bg-[#1e3a8a] text-white px-1 py-0.5 rounded shadow-sm">
-                                        YOU
+                  {/* ✅ CHECK IF CYCLE IS SKIPPED (from Gemini update) */}
+                  {cycle.isSkipped ? (
+                    <div className="p-6 text-center text-gray-500 bg-white">
+                      <PauseCircle className="mx-auto mb-2 text-gray-300" size={32} />
+                      <p>This cycle was skipped. No payments recorded.</p>
+                    </div>
+                  ) : (
+                    /* 3. Table Container with Custom Scrollbar */
+                    <div className="overflow-x-auto [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
+                      <table className="w-full text-left min-w-[480px] md:min-w-[640px]">
+                        <thead>
+                          <tr className="text-xs text-gray-500 bg-white border-b border-gray-100">
+                            {/* Dense padding on mobile */}
+                            <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider">Member</th>
+                            <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider hidden sm:table-cell">Amount</th>
+                            <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider">Status</th>
+                            <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider hidden md:table-cell">Method</th>
+                            <th className="px-3 py-2 md:px-4 md:py-4 lg:px-6 font-medium uppercase tracking-wider text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-sm divide-y divide-gray-50">
+                          {cycle.payments.map((p: any) => {
+                            const isMe = p.userId === currentUserId;
+                            const isLeader = group.myRole === 'leader';
+                            const isSubLeader = group.myRole === 'sub_leader';
+                            
+                            // Check if this row should have any action buttons
+                            // ✅ DISABLE ACTIONS IF GROUP IS COMPLETED (from Gemini update)
+                            const hasActions = !isGroupCompleted && (isLeader || (isMe && p.status === 'paid'));
+                            
+                            return (
+                              <tr key={p.id} className={`transition-colors ${isMe ? 'bg-blue-50/40' : 'hover:bg-gray-50'}`}>
+                                
+                                {/* Member Name */}
+                                <td className="px-3 py-2.5 md:px-4 md:py-4 lg:px-6">
+                                  <div className="flex flex-col">
+                                    <div className="flex items-center gap-1 md:gap-2">
+                                      <span className={`font-semibold text-xs md:text-sm lg:text-base ${isMe ? 'text-[#1e3a8a]' : 'text-gray-900'}`}>
+                                        {p.memberName}
                                       </span>
-                                    )}
-                                  </div>
-                                  <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1 md:gap-2 mt-0.5">
-                                    <span className="text-xs font-medium text-gray-700 sm:hidden">₹{p.amount.toLocaleString('en-IN')}</span>
-                                    <span className="text-[10px] md:text-xs text-gray-400">{p.memberPhone || 'No phone'}</span>
-                                  </div>
-                                </div>
-                              </td>
-
-                              {/* Amount - Hidden on mobile */}
-                              <td className="px-3 md:px-4 lg:px-6 py-3 md:py-4 font-medium text-gray-700 hidden sm:table-cell">
-                                ₹{p.amount.toLocaleString('en-IN')}
-                              </td>
-
-                              {/* Status Column - FIXED: Show paid date */}
-                              <td className="px-3 py-2.5 md:px-4 md:py-4 lg:px-6">
-                                {p.status === 'paid' ? (
-                                  <div className="flex flex-col items-start gap-0.5">
-                                    <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-full text-[10px] md:text-xs font-bold border border-emerald-100">
-                                      <div className="hidden md:block">
-                                        <CheckCircle size={12} />
-                                      </div>
-                                      <div className="md:hidden">
-                                        <CheckCircle size={10} />
-                                      </div>
-                                      <span className="hidden xs:inline">PAID</span>
-                                    </span>
-                                    {/* FIXED: Show Paid Date - check p.paidDate directly */}
-                                    {p.paidDate && (
-                                      <span className="text-[9px] md:text-[10px] text-gray-500 font-medium">
-                                        {formatDate(p.paidDate)}
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-full text-[10px] md:text-xs font-bold border border-amber-100">
-                                    <div className="hidden md:block">
-                                      <Clock size={12} />
-                                    </div>
-                                    <div className="md:hidden">
-                                      <Clock size={10} />
-                                    </div>
-                                    <span className="hidden xs:inline">PENDING</span>
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Method - Hidden on mobile/tablet */}
-                              <td className="px-3 md:px-4 lg:px-6 py-3 md:py-4 text-gray-600 font-medium hidden md:table-cell">
-                                {p.status === 'paid' ? p.method : '-'}
-                              </td>
-                              
-                              {/* ACTION BUTTONS - Compact gap for mobile */}
-                              <td className="px-3 py-2.5 md:px-4 md:py-4 lg:px-6 text-right">
-                                {hasActions ? (
-                                  <div className="flex justify-end items-center gap-1 md:gap-2">
-                                    
-                                    {/* Method Badge for mobile */}
-                                    <div className="md:hidden mr-1">
-                                      {p.status === 'paid' && (
-                                        <span className="text-[10px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                                          {p.method}
+                                      {isMe && (
+                                        <span className="text-[9px] md:text-[10px] font-extrabold bg-[#1e3a8a] text-white px-1 py-0.5 rounded shadow-sm">
+                                          YOU
                                         </span>
                                       )}
                                     </div>
-                                    
-                                    {/* LEADER ACTIONS */}
-                                    {isLeader && (
-                                      <>
-                                        {p.status === 'pending' && (
-                                          <>
-                                            <button 
-                                              onClick={() => handleMarkPaid(p.id)}
-                                              className="p-1 md:p-1.5 lg:p-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors border border-emerald-200"
-                                              title="Mark as Paid (Cash)"
-                                            >
-                                              <div className="hidden lg:block">
-                                                <CheckCircle size={18} />
-                                              </div>
-                                              <div className="hidden md:block lg:hidden">
-                                                <CheckCircle size={16} />
-                                              </div>
-                                              <div className="md:hidden">
-                                                <CheckCircle size={14} />
-                                              </div>
-                                            </button>
-                                            <button 
-                                              onClick={() => handleWhatsApp(p, group.groupName, cycle.cycleNumber)}
-                                              className="p-1 md:p-1.5 lg:p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 border border-green-200 transition-colors"
-                                              title="Send WhatsApp Reminder"
-                                            >
-                                              <div className="hidden lg:block">
-                                                <Smartphone size={18} />
-                                              </div>
-                                              <div className="hidden md:block lg:hidden">
-                                                <Smartphone size={16} />
-                                              </div>
-                                              <div className="md:hidden">
-                                                <Smartphone size={14} />
-                                              </div>
-                                            </button>
-                                          </>
-                                        )}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1 md:gap-2 mt-0.5">
+                                      <span className="text-xs font-medium text-gray-700 sm:hidden">₹{p.amount.toLocaleString('en-IN')}</span>
+                                      <span className="text-[10px] md:text-xs text-gray-400">{p.memberPhone || 'No phone'}</span>
+                                    </div>
+                                  </div>
+                                </td>
 
-                                        {p.status === 'paid' && (
-                                          <>
-                                            {/* Edit Method */}
-                                            <button 
-                                              onClick={() => { setEditingPayment(p); setMethodForm(p.method); }}
-                                              className="p-1 md:p-1.5 lg:p-2 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors"
-                                              title="Edit Payment Method"
-                                            >
-                                              <div className="hidden lg:block">
-                                                <Edit size={18} />
-                                              </div>
-                                              <div className="hidden md:block lg:hidden">
-                                                <Edit size={16} />
-                                              </div>
-                                              <div className="md:hidden">
-                                                <Edit size={14} />
-                                              </div>
-                                            </button>
+                                {/* Amount - Hidden on mobile */}
+                                <td className="px-3 md:px-4 lg:px-6 py-3 md:py-4 font-medium text-gray-700 hidden sm:table-cell">
+                                  ₹{p.amount.toLocaleString('en-IN')}
+                                </td>
 
-                                            {/* UNMARK (Revert) */}
-                                            <button 
-                                              onClick={() => handleUnmarkPaid(p.id)}
-                                              className="p-1 md:p-1.5 lg:p-2 bg-amber-50 border border-amber-200 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors"
-                                              title="Unmark (Revert to Pending)"
-                                            >
-                                              <div className="hidden lg:block">
-                                                <RotateCcw size={18} />
-                                              </div>
-                                              <div className="hidden md:block lg:hidden">
-                                                <RotateCcw size={16} />
-                                              </div>
-                                              <div className="md:hidden">
-                                                <RotateCcw size={14} />
-                                              </div>
-                                            </button>
-
-                                            {/* Delete */}
-                                            <button 
-                                              onClick={() => handleDelete(p.id)}
-                                              className="p-1 md:p-1.5 lg:p-2 bg-red-50 border border-red-200 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
-                                              title="Delete Record"
-                                            >
-                                              <div className="hidden lg:block">
-                                                <Trash2 size={18} />
-                                              </div>
-                                              <div className="hidden md:block lg:hidden">
-                                                <Trash2 size={16} />
-                                              </div>
-                                              <div className="md:hidden">
-                                                <Trash2 size={14} />
-                                              </div>
-                                            </button>
-
-                                            {/* Download Receipt */}
-                                            <button 
-                                              onClick={() => handleDownloadReceipt(p)}
-                                              className="p-1 md:p-1.5 lg:p-2 bg-blue-50 border border-blue-200 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
-                                              title="Download Receipt"
-                                            >
-                                              <div className="hidden lg:block">
-                                                <Download size={18} />
-                                              </div>
-                                              <div className="hidden md:block lg:hidden">
-                                                <Download size={16} />
-                                              </div>
-                                              <div className="md:hidden">
-                                                <Download size={14} />
-                                              </div>
-                                            </button>
-                                          </>
-                                        )}
-                                      </>
-                                    )}
-
-                                    {/* MEMBER ACTION: Download Own Receipt */}
-                                    {!isLeader && isMe && p.status === 'paid' && (
-                                      <button 
-                                        onClick={() => handleDownloadReceipt(p)}
-                                        className="px-1.5 md:px-2 lg:px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-100 border border-blue-200 flex items-center gap-1 transition-colors"
-                                      >
+                                {/* Status Column - FIXED: Show paid date */}
+                                <td className="px-3 py-2.5 md:px-4 md:py-4 lg:px-6">
+                                  {p.status === 'paid' ? (
+                                    <div className="flex flex-col items-start gap-0.5">
+                                      <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-full text-[10px] md:text-xs font-bold border border-emerald-100">
                                         <div className="hidden md:block">
-                                          <Download size={14} />
+                                          <CheckCircle size={12} />
                                         </div>
                                         <div className="md:hidden">
-                                          <Download size={12} />
+                                          <CheckCircle size={10} />
                                         </div>
-                                        <span className="hidden xs:inline">Receipt</span>
-                                      </button>
-                                    )}
-
-                                  </div>
-                                ) : (
-                                  // VIEW ONLY text for rows with no actions
-                                  <div className="flex justify-end items-center">
-                                    <span className="text-[10px] md:text-xs text-gray-400 italic flex items-center gap-1">
+                                        <span className="hidden xs:inline">PAID</span>
+                                      </span>
+                                      {/* FIXED: Show Paid Date - check p.paidDate directly */}
+                                      {p.paidDate && (
+                                        <span className="text-[9px] md:text-[10px] text-gray-500 font-medium">
+                                          {formatDate(p.paidDate)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-full text-[10px] md:text-xs font-bold border border-amber-100">
                                       <div className="hidden md:block">
-                                        <Eye size={12} />
+                                        <Clock size={12} />
                                       </div>
                                       <div className="md:hidden">
-                                        <Eye size={10} />
+                                        <Clock size={10} />
                                       </div>
-                                      View Only
+                                      <span className="hidden xs:inline">PENDING</span>
                                     </span>
-                                  </div>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                                  )}
+                                </td>
+
+                                {/* Method - Hidden on mobile/tablet */}
+                                <td className="px-3 md:px-4 lg:px-6 py-3 md:py-4 text-gray-600 font-medium hidden md:table-cell">
+                                  {p.status === 'paid' ? p.method : '-'}
+                                </td>
+                                
+                                {/* ACTION BUTTONS - Compact gap for mobile */}
+                                <td className="px-3 py-2.5 md:px-4 md:py-4 lg:px-6 text-right">
+                                  {hasActions ? (
+                                    <div className="flex justify-end items-center gap-1 md:gap-2">
+                                      
+                                      {/* Method Badge for mobile */}
+                                      <div className="md:hidden mr-1">
+                                        {p.status === 'paid' && (
+                                          <span className="text-[10px] font-medium bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                                            {p.method}
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      {/* LEADER ACTIONS */}
+                                      {isLeader && (
+                                        <>
+                                          {p.status === 'pending' && (
+                                            <>
+                                              <button 
+                                                onClick={() => handleMarkPaid(p.id)}
+                                                className="p-1 md:p-1.5 lg:p-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors border border-emerald-200"
+                                                title="Mark as Paid (Cash)"
+                                              >
+                                                <div className="hidden lg:block">
+                                                  <CheckCircle size={18} />
+                                                </div>
+                                                <div className="hidden md:block lg:hidden">
+                                                  <CheckCircle size={16} />
+                                                </div>
+                                                <div className="md:hidden">
+                                                  <CheckCircle size={14} />
+                                                </div>
+                                              </button>
+                                              <button 
+                                                onClick={() => handleWhatsApp(p, group.groupName, cycle.cycleNumber)}
+                                                className="p-1 md:p-1.5 lg:p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 border border-green-200 transition-colors"
+                                                title="Send WhatsApp Reminder"
+                                              >
+                                                <div className="hidden lg:block">
+                                                  <Smartphone size={18} />
+                                                </div>
+                                                <div className="hidden md:block lg:hidden">
+                                                  <Smartphone size={16} />
+                                                </div>
+                                                <div className="md:hidden">
+                                                  <Smartphone size={14} />
+                                                </div>
+                                              </button>
+                                            </>
+                                          )}
+
+                                          {p.status === 'paid' && (
+                                            <>
+                                              {/* Edit Method */}
+                                              <button 
+                                                onClick={() => { setEditingPayment(p); setMethodForm(p.method); }}
+                                                className="p-1 md:p-1.5 lg:p-2 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                                                title="Edit Payment Method"
+                                              >
+                                                <div className="hidden lg:block">
+                                                  <Edit size={18} />
+                                                </div>
+                                                <div className="hidden md:block lg:hidden">
+                                                  <Edit size={16} />
+                                                </div>
+                                                <div className="md:hidden">
+                                                  <Edit size={14} />
+                                                </div>
+                                              </button>
+
+                                              {/* UNMARK (Revert) */}
+                                              <button 
+                                                onClick={() => handleUnmarkPaid(p.id)}
+                                                className="p-1 md:p-1.5 lg:p-2 bg-amber-50 border border-amber-200 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors"
+                                                title="Unmark (Revert to Pending)"
+                                              >
+                                                <div className="hidden lg:block">
+                                                  <RotateCcw size={18} />
+                                                </div>
+                                                <div className="hidden md:block lg:hidden">
+                                                  <RotateCcw size={16} />
+                                                </div>
+                                                <div className="md:hidden">
+                                                  <RotateCcw size={14} />
+                                                </div>
+                                              </button>
+
+                                              {/* Delete */}
+                                              <button 
+                                                onClick={() => handleDelete(p.id)}
+                                                className="p-1 md:p-1.5 lg:p-2 bg-red-50 border border-red-200 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
+                                                title="Delete Record"
+                                              >
+                                                <div className="hidden lg:block">
+                                                  <Trash2 size={18} />
+                                                </div>
+                                                <div className="hidden md:block lg:hidden">
+                                                  <Trash2 size={16} />
+                                                </div>
+                                                <div className="md:hidden">
+                                                  <Trash2 size={14} />
+                                                </div>
+                                              </button>
+
+                                              {/* Download Receipt */}
+                                              <button 
+                                                onClick={() => handleDownloadReceipt(p)}
+                                                className="p-1 md:p-1.5 lg:p-2 bg-blue-50 border border-blue-200 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                                                title="Download Receipt"
+                                              >
+                                                <div className="hidden lg:block">
+                                                  <Download size={18} />
+                                                </div>
+                                                <div className="hidden md:block lg:hidden">
+                                                  <Download size={16} />
+                                                </div>
+                                                <div className="md:hidden">
+                                                  <Download size={14} />
+                                                </div>
+                                              </button>
+                                            </>
+                                          )}
+                                        </>
+                                      )}
+
+                                      {/* MEMBER ACTION: Download Own Receipt */}
+                                      {!isLeader && isMe && p.status === 'paid' && (
+                                        <button 
+                                          onClick={() => handleDownloadReceipt(p)}
+                                          className="px-1.5 md:px-2 lg:px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-100 border border-blue-200 flex items-center gap-1 transition-colors"
+                                        >
+                                          <div className="hidden md:block">
+                                            <Download size={14} />
+                                          </div>
+                                          <div className="md:hidden">
+                                            <Download size={12} />
+                                          </div>
+                                          <span className="hidden xs:inline">Receipt</span>
+                                        </button>
+                                      )}
+
+                                    </div>
+                                  ) : (
+                                    // VIEW ONLY text for rows with no actions
+                                    <div className="flex justify-end items-center">
+                                      <span className="text-[10px] md:text-xs text-gray-400 italic flex items-center gap-1">
+                                        <div className="hidden md:block">
+                                          <Eye size={12} />
+                                        </div>
+                                        <div className="md:hidden">
+                                          <Eye size={10} />
+                                        </div>
+                                        View Only
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

@@ -8,7 +8,7 @@ import {
   ChevronUp, Trash2,
   Loader2, RefreshCw, ArrowUpRight,
   RotateCcw, AlertCircle, PlayCircle, PauseCircle,
-  EyeOff, FileText, X, BarChart
+  EyeOff, FileText, X, BarChart, Trophy, AlertTriangle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { jsPDF } from 'jspdf';
@@ -299,12 +299,13 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
   const [showReportModal, setShowReportModal] = useState(false);
   const [generatingPDF, setGeneratingPDF] = useState(false);
   
-  // ✅ State to track internal role - with improved detection
+  // ✅ State to track internal role
   const [userRole, setUserRole] = useState<'leader' | 'sub_leader' | 'member'>('member');
   
-  // ✅ NEW STATE: Track Group Status (FROM SECOND CODE)
+  // ✅ NEW STATE: Track Group Status (FROM GEMINI UPDATES)
   const [isGroupCompleted, setIsGroupCompleted] = useState(false);
   const [groupName, setGroupName] = useState('Group');
+  const [hasSkippedCycles, setHasSkippedCycles] = useState(false);
   
   const actionsMenuRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
@@ -314,7 +315,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
     fetchUserRole();
   }, [groupId]);
 
-  // ✅ IMPROVED: Fetch Role with multiple fallback methods
+  // ✅ IMPROVED: Fetch Role
   const fetchUserRole = async () => {
     try {
       if (!user) return;
@@ -329,13 +330,11 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
         const membersList = data.members || [];
         
         const myRecord = membersList.find((m: any) => {
-          // Try ID match
           const memberId = m.userId?._id || m.userId;
           if (memberId && currentUserId && String(memberId) === String(currentUserId)) {
             return true;
           }
 
-          // Try email match
           const memberEmail = m.userId?.email || m.pendingMemberDetails?.email;
           if (memberEmail && currentUserEmail && memberEmail.toLowerCase() === currentUserEmail.toLowerCase()) {
             return true;
@@ -350,7 +349,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
         }
       }
 
-      // Method 2: Fallback to group API for leader/sub-leader detection
+      // Method 2: Fallback to group API
       const groupResponse = await fetch(`/api/groups/${groupId}?t=${Date.now()}`);
       if (groupResponse.ok) {
         const data = await groupResponse.json();
@@ -372,11 +371,11 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
     }
   };
 
-  // ✅ PERMISSION CONSTANTS
+  // ✅ PERMISSION CONSTANTS (YOUR ORIGINAL DESIGN)
   const amILeader = userRole === 'leader';
   const amISubLeader = userRole === 'sub_leader';
   const amIAdmin = amILeader || amISubLeader;
-  const canExportReport = canManage || amIAdmin; // For header export button
+  const canExportReport = canManage || amIAdmin;
 
   const fetchPaymentData = async () => {
     try {
@@ -394,7 +393,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
       setCurrentCycle(data.currentCycle);
       setPayments(data.payments || []);
       
-      // ✅ SAVE GROUP INFO (FROM SECOND CODE)
+      // ✅ SAVE GROUP INFO (GEMINI UPDATES)
       if (data.groupName) setGroupName(data.groupName);
       if (data.isGroupCompleted !== undefined) setIsGroupCompleted(data.isGroupCompleted);
 
@@ -417,7 +416,13 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
       }
       
       const data = await response.json();
-      setCycles(data.cycles || []);
+      const allCycles = data.cycles || [];
+      setCycles(allCycles);
+      
+      // ✅ Check for skipped cycles (GEMINI UPDATES)
+      const skippedCount = allCycles.filter((c: any) => c.status === 'skipped' || c.isSkipped).length;
+      setHasSkippedCycles(skippedCount > 0);
+      
     } catch (error) {
       console.error('Error fetching cycles:', error);
     }
@@ -452,7 +457,6 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
 
   const canViewReceipt = (payment: any) => {
     if (payment.status !== 'paid') return false;
-    // Leaders and Sub-leaders can view all receipts
     if (amIAdmin) return true;
     return isCurrentUser(payment.userId?._id);
   };
@@ -515,18 +519,14 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
     }).format(amount);
   };
 
-  // ✅ NEW: Helper function to get member name for reports
+  // ✅ NEW: Helper function to get member name for reports (GEMINI UPDATES)
   const getMemberNameForReport = (payment: any) => {
-    // Always use snapshot name (memberName) first
     if (payment.memberName) return payment.memberName;
-    
-    // Fallback to userId name if snapshot name not available
     if (payment.userId?.name) return payment.userId.name;
-    
     return 'Unknown Member';
   };
 
-  // ✅ UPDATED: General Report PDF Generation
+  // ✅ UPDATED: General Report PDF Generation (YOUR ORIGINAL DESIGN)
   const handleGenerateGeneralReportPDF = async () => {
     try {
       setGeneratingPDF(true);
@@ -535,7 +535,6 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
       const paymentStats = getPaymentStats();
       const activeCycle = getActiveCycleInfo();
       
-      // Fetch group details for the report
       const groupResponse = await fetch(`/api/groups/${groupId}`);
       const groupData = await groupResponse.json();
       const groupName = groupData.group?.name || "ROSCA Group";
@@ -724,12 +723,11 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
     const paymentStats = getPaymentStats();
     
     const reportData = {
-      groupName: groupName, // ✅ Use State Group Name
+      groupName: groupName,
       activeCycle: activeCycle,
       paymentStats: paymentStats,
       payments: filteredPayments.map(payment => ({
         ...payment,
-        // ✅ Use snapshot name for the report modal
         memberName: getMemberNameForReport(payment)
       })),
       summary: {
@@ -820,19 +818,17 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
     toast.success(`Opening WhatsApp for ${name}...`);
   };
 
-  // ✅ UPDATED: Personal Receipt Download
+  // ✅ UPDATED: Personal Receipt Download (YOUR ORIGINAL DESIGN)
   const handleDownloadReceipt = async (paymentId: string) => {
     try {
       setProcessingPayment(paymentId);
       const loadingToast = toast.loading('Generating receipt...');
       
-      // Fetch payment data for receipt
       const payment = payments.find(p => p._id === paymentId);
       if (!payment) {
         throw new Error('Payment not found');
       }
 
-      // Fetch group details
       const groupResponse = await fetch(`/api/groups/${groupId}`);
       const groupData = await groupResponse.json();
       const groupName = groupData.group?.name || "ROSCA Group";
@@ -1148,15 +1144,25 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
   };
 
   const getCycleStatusMessage = () => {
-    // ✅ CRITICAL CHECK: If Group is fully completed, return special message (FROM SECOND CODE)
+    // ✅ CRITICAL CHECK: Check for completion AND skipped cycles (GEMINI UPDATES)
     if (isGroupCompleted) {
-        return {
-            title: "All Cycles Completed",
-            message: `Total cycles of this ${groupName} group completed.. So no payments track..`,
-            icon: <CheckCircle className="h-16 w-16 text-success" />,
-            actionText: "View History",
-            action: fetchCycles // Redirect or action
-        };
+        if (hasSkippedCycles) {
+            return {
+                title: "Cycle Limit Reached",
+                message: `This group has finished its timeline, but has SKIPPED cycles. Payments cannot be tracked until they are reactivated.`,
+                icon: <AlertTriangle className="h-16 w-16 text-amber-500" />,
+                actionText: "Manage Cycles",
+                action: fetchCycles
+            };
+        } else {
+            return {
+                title: "All Cycles Completed",
+                message: `Total cycles of this ${groupName} group completed.. So no payments track..`,
+                icon: <CheckCircle className="h-16 w-16 text-success" />,
+                actionText: "View History",
+                action: fetchCycles 
+            };
+        }
     }
 
     if (cycles.length === 0) {
@@ -1259,14 +1265,14 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
             >
               <RefreshCw size={18} className="text-text/60" />
             </button>
-            {/* ✅ Export Button: Visible to Leader & Sub-leader, disabled when group completed (FROM SECOND CODE) */}
+            {/* ✅ Export Button: Visible to Leader & Sub-leader, disabled when group completed (GEMINI UPDATES) */}
             {canExportReport && (
               <button 
                 onClick={handleGenerateGeneralReportPDF}
-                disabled={generatingPDF || isGroupCompleted}
+                disabled={generatingPDF || (isGroupCompleted && !hasSkippedCycles)}
                 title={isGroupCompleted ? "All cycles completed. No payment data to export." : "Export payment report as PDF"}
                 className={`flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg transition-colors text-sm font-medium ${
-                  generatingPDF || isGroupCompleted 
+                  generatingPDF || (isGroupCompleted && !hasSkippedCycles) 
                     ? 'opacity-50 cursor-not-allowed bg-gray-100 text-gray-400' 
                     : 'hover:bg-gray-50 text-text'
                 }`}
@@ -1299,7 +1305,6 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
           </p>
           
           <div className="flex flex-col sm:flex-row gap-3">
-            {/* Action button visible to Leader (usually) - relying on canManage for specific cycle actions */}
             {canManage && (
               <button
                 onClick={statusMessage.action}
@@ -1341,7 +1346,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Report Modal - Pass the reportData object */}
+      {/* Report Modal */}
       <ReportModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
@@ -1385,14 +1390,13 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
             <RefreshCw size={18} className="text-text/60" />
           </button>
           
-          {/* ✅ Export Button: Visible to Leader & Sub-leader, disabled when group completed (FROM SECOND CODE) */}
+          {/* ✅ Export Button: Visible to Leader & Sub-leader */}
           {canExportReport && (
             <button 
               onClick={handleGenerateGeneralReportPDF}
-              disabled={generatingPDF || isGroupCompleted}
-              title={isGroupCompleted ? "All cycles completed. No payment data to export." : "Export payment report as PDF"}
+              disabled={generatingPDF}
               className={`flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg transition-colors text-sm font-medium ${
-                generatingPDF || isGroupCompleted 
+                generatingPDF 
                   ? 'opacity-50 cursor-not-allowed bg-gray-100 text-gray-400' 
                   : 'hover:bg-gray-50 text-text'
               }`}
@@ -1402,18 +1406,14 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
               ) : (
                 <Download size={16} />
               )}
-              <span className="hidden sm:inline">
-                {isGroupCompleted ? 'Group Completed' : 'Export Report'}
-              </span>
-              <span className="sm:hidden">
-                {isGroupCompleted ? 'Completed' : 'Export'}
-              </span>
+              <span className="hidden sm:inline">Export Report</span>
+              <span className="sm:hidden">Export</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards - YOUR ORIGINAL DESIGN */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white p-4 rounded-xl border border-gray-200">
           <div className="flex items-center justify-between mb-2">
@@ -1460,10 +1460,12 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
         </div>
       </div>
 
+      {/* Main Payment Table - YOUR ORIGINAL DESIGN */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="p-4 sm:p-6 border-b border-gray-200">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              {/* Filter Dropdown - YOUR ORIGINAL STYLING */}
               <div className="relative w-full sm:w-auto">
                 <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-lg px-3 py-2.5 cursor-pointer hover:border-primary transition-colors">
                   <Filter size={16} className="text-text/40" />
@@ -1481,6 +1483,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
                 </div>
               </div>
               
+              {/* Search Input - YOUR ORIGINAL STYLING */}
               <div className="relative flex-1 w-full sm:w-auto">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-text/40" size={18} />
                 <input
@@ -1493,7 +1496,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
               </div>
             </div>
             
-            {/* Bulk Actions: Leader Only */}
+            {/* Bulk Actions: Leader Only - YOUR ORIGINAL STYLING */}
             {amILeader && (
               <div className="flex items-center gap-3 w-full sm:w-auto">
                 <button
@@ -1568,7 +1571,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
           )}
         </div>
 
-        {/* ✅ MOBILE VIEW: CARD LIST */}
+        {/* ✅ MOBILE VIEW: CARD LIST - YOUR ORIGINAL DESIGN */}
         <div className="block lg:hidden">
           <div className="divide-y divide-gray-100">
             {filteredPayments.map((payment) => {
@@ -1735,7 +1738,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
           </div>
         </div>
 
-        {/* DESKTOP VIEW: TABLE */}
+        {/* DESKTOP VIEW: TABLE - YOUR ORIGINAL DESIGN */}
         <div className="hidden lg:block">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -1821,7 +1824,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
                       <td className="py-4 px-6">
                         <div className="flex items-center gap-2">
                           {amILeader ? (
-                            // LEADER VIEW: Full Actions
+                            // ✅ LEADER VIEW: Full Actions - YOUR ORIGINAL BUTTON DESIGN RESTORED
                             <>
                               {payment.status !== 'paid' ? (
                                 <>
@@ -1938,7 +1941,7 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
                               </div>
                             </>
                           ) : (
-                            // MEMBER VIEW
+                            // ✅ MEMBER VIEW - YOUR ORIGINAL DESIGN RESTORED
                             canViewReceipt(payment) ? (
                               <button
                                 onClick={() => handleDownloadReceipt(payment._id)}
@@ -1986,8 +1989,8 @@ export default function PaymentTracker({ groupId, canManage = false }: PaymentTr
         )}
       </div>
 
-      {/* Grid of Action Cards at Bottom - Leader Only */}
-      {amILeader && !isGroupCompleted && ( // ✅ Also hide action cards when group is completed (FROM SECOND CODE)
+      {/* Grid of Action Cards at Bottom - Leader Only - YOUR ORIGINAL DESIGN */}
+      {amILeader && !isGroupCompleted && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           <button 
             onClick={() => {

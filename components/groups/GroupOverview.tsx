@@ -21,7 +21,8 @@ import {
   PauseCircle,
   Hash,
   EyeOff,
-  Trophy, // ✅ Imported Trophy icon
+  Trophy, 
+  AlertTriangle // ✅ Imported AlertTriangle
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -31,7 +32,6 @@ import { useAuth } from "@/components/providers/AuthProvider";
 
 interface GroupOverviewProps {
   group: any;
-  // userRole removed from interface as we calculate it internally now
 }
 
 // Pie Chart Component
@@ -145,16 +145,13 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
   
   // ✅ NEW: Track group completion status
   const [isGroupCompleted, setIsGroupCompleted] = useState(false);
+  // ✅ NEW: Track skipped cycles
+  const [hasSkippedCycles, setHasSkippedCycles] = useState(false);
 
   // --- PERMISSION LOGIC (FIXED) ---
   const currentUserId = user?.id || (user as any)?._id;
-  // Handle different data structures for leader ID
   const leaderId = group?.leader?.id || group?.leader?._id || group?.leader;
-
-  // Calculate if current user is leader
   const isLeader = currentUserId && leaderId && currentUserId.toString() === leaderId.toString();
-
-  // Leader Only Permission for "Mark Paid"
   const canManagePayments = isLeader;
 
   useEffect(() => {
@@ -236,9 +233,14 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
       );
       if (response.ok) {
         const data = await response.json();
-        setCycles(data.cycles || []);
+        const allCycles = data.cycles || [];
+        setCycles(allCycles);
 
-        const foundActive = data.cycles.find((cycle: any) => {
+        // ✅ Check for skipped cycles
+        const skipped = allCycles.some((c: any) => c.status === 'skipped' || c.isSkipped);
+        setHasSkippedCycles(skipped);
+
+        const foundActive = allCycles.find((cycle: any) => {
           return cycle.status === "active";
         });
 
@@ -323,7 +325,6 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
       return;
     }
 
-    // Only leaders can send reminders
     if (!canManagePayments) {
       toast.error("You don't have permission to send reminders");
       return;
@@ -852,18 +853,41 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
       // ✅ SUCCESS MESSAGE IF GROUP IS COMPLETED
       if (isGroupCompleted) {
         return (
-            <div className="mb-6 p-8 bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500">
-                <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
-                <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
+            <div className={`mb-6 p-8 border rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500 ${
+                hasSkippedCycles ? 'bg-amber-50 border-amber-200' : 'bg-gradient-to-br from-green-50 to-emerald-100 border-green-200'
+            }`}>
+                {!hasSkippedCycles && (
+                    <>
+                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
+                        <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
+                    </>
+                )}
 
                 <div className="relative z-10 flex flex-col items-center">
                     <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-md mb-4 animate-bounce">
-                        <Trophy className="text-yellow-500 w-8 h-8" fill="currentColor" />
+                        {hasSkippedCycles ? (
+                            <AlertTriangle className="text-amber-500 w-8 h-8" fill="currentColor" />
+                        ) : (
+                            <Trophy className="text-yellow-500 w-8 h-8" fill="currentColor" />
+                        )}
                     </div>
-                    <h3 className="text-2xl font-bold text-green-800 mb-2">Group Successfully Completed!</h3>
-                    <p className="text-green-700 max-w-md mx-auto">
-                         Total cycles of this "{group.name}" group are completed. So group members cycles and payments are completed.
-                    </p>
+                    
+                    {hasSkippedCycles ? (
+                         <>
+                            <h3 className="text-2xl font-bold text-amber-800 mb-2">Cycle Limit Reached</h3>
+                            <p className="text-amber-700 max-w-md mx-auto">
+                                The group timeline has ended, but there are Skipped Cycles remaining. 
+                                Unskip cycles in the Cycle Management tab to complete payments.
+                            </p>
+                         </>
+                    ) : (
+                         <>
+                            <h3 className="text-2xl font-bold text-green-800 mb-2">Group Successfully Completed!</h3>
+                            <p className="text-green-700 max-w-md mx-auto">
+                                 Total cycles of this "{group.name}" group are completed. So group members cycles and payments are completed.
+                            </p>
+                         </>
+                    )}
                 </div>
             </div>
         );
@@ -962,18 +986,22 @@ export default function GroupOverview({ group }: GroupOverviewProps) {
     },
     {
       title: "Active Cycle",
-      value: isGroupCompleted ? "Completed" : (hasActiveCycle() ? `Cycle #${activeCycle.cycleNumber}` : "None"),
+      // ✅ Update Status Text based on completion/skip
+      value: isGroupCompleted 
+          ? (hasSkippedCycles ? "Paused (Skips)" : "Completed")
+          : (hasActiveCycle() ? `Cycle #${activeCycle.cycleNumber}` : "None"),
       change: isGroupCompleted 
-        ? "All finished" 
+        ? (hasSkippedCycles ? "Resolve skips" : "All finished")
         : (hasActiveCycle() ? `${activeCycle.recipientName || "Not assigned"} to receive` : "No active cycle"),
-      trend: hasActiveCycle() || isGroupCompleted ? "up" : "neutral",
+      trend: hasActiveCycle() || (isGroupCompleted && !hasSkippedCycles) ? "up" : "neutral",
       icon: <Hash className="text-accent" size={20} />,
     },
     {
       title: "Completion Rate",
-      value: isGroupCompleted ? "100%" : `${stats.completionRate}%`,
+      // ✅ Only show 100% if no skips
+      value: (isGroupCompleted && !hasSkippedCycles) ? "100%" : `${stats.completionRate}%`,
       change: stats.completionRate > 0 ? "+3% from last" : "No data",
-      trend: stats.completionRate > 0 || isGroupCompleted ? "up" : "neutral",
+      trend: stats.completionRate > 0 || (isGroupCompleted && !hasSkippedCycles) ? "up" : "neutral",
       icon: <TrendingUp className="text-secondary" size={20} />,
     },
   ];

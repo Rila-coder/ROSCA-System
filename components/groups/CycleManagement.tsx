@@ -16,17 +16,18 @@ import {
   Zap,
   Trophy,
   FileText,
-  Receipt
+  Receipt,
+  AlertTriangle // ✅ Imported AlertTriangle
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable"; 
+import autoTable from "jspdf-autotable";
 
 interface CycleManagementProps {
   groupId: string;
-  canManage?: boolean; 
-  currentCycle?: any; 
-  members?: any[]; 
+  canManage?: boolean;
+  currentCycle?: any;
+  members?: any[];
 }
 
 type CycleStatus = "completed" | "active" | "upcoming" | "skipped";
@@ -145,6 +146,7 @@ export default function CycleManagement({
           return;
         }
 
+        router.refresh(); 
         await fetchCycles();
         toast.success(`Cycle ${cycle.cycleNumber} skipped`);
       } catch (error) {
@@ -183,6 +185,7 @@ export default function CycleManagement({
         return;
       }
 
+      router.refresh(); 
       await fetchCycles();
       toast.success(data.message || "Cycle reactivated!");
     } catch (error) {
@@ -214,6 +217,7 @@ export default function CycleManagement({
         return;
       }
 
+      router.refresh(); 
       await fetchCycles();
       toast.success(`Cycle ${cycle.cycleNumber} activated!`);
     } catch (error) {
@@ -227,8 +231,6 @@ export default function CycleManagement({
     if (!canManage) return;
     try {
       setProcessing("next");
-      
-      console.log("=== Starting Normal Next Cycle ===");
       
       const response = await fetch(`/api/groups/${groupId}/cycles`, {
         method: "POST",
@@ -252,6 +254,7 @@ export default function CycleManagement({
         throw new Error("Failed to start next cycle");
       }
 
+      router.refresh(); 
       await fetchCycles();
       toast.success("Next cycle started successfully!");
     } catch (error: any) {
@@ -266,8 +269,6 @@ export default function CycleManagement({
     if (!canManage) return;
     try {
       setProcessing("upcoming");
-      
-      console.log("=== Starting Upcoming Cycle ===");
       
       const response = await fetch(`/api/groups/${groupId}/cycles`, {
         method: "POST",
@@ -291,6 +292,7 @@ export default function CycleManagement({
         throw new Error("Failed to start upcoming cycle");
       }
 
+      router.refresh(); 
       await fetchCycles();
       toast.success("Upcoming cycle created! Click 'Let's Active' to activate it.");
     } catch (error: any) {
@@ -307,7 +309,7 @@ export default function CycleManagement({
       return;
     }
 
-    if (!isGroupFullyCompleted()) {
+    if (!isTimelineFull()) {
       toast.error("Export schedule is only available when all cycles are completed");
       return;
     }
@@ -667,16 +669,26 @@ export default function CycleManagement({
     }
   };
 
-  const isGroupFullyCompleted = () => {
+  // ✅ NEW: Check if cycle timeline is full (processed >= duration)
+  const isTimelineFull = () => {
     if (groupDuration === 0) return false;
-    if (cycles.length < groupDuration) return false;
     
-    const lastCycle = cycles[cycles.length - 1];
-    return lastCycle && (lastCycle.isCompleted || lastCycle.status === 'completed');
+    // Count total PROCESSED (Completed or Skipped)
+    const processedCount = cycles.filter(
+        (c) => c.status === "completed" || c.status === "skipped" || c.isCompleted || c.isSkipped
+    ).length;
+
+    // Check if we've handled as many cycles as possible
+    return processedCount >= groupDuration;
+  };
+
+  // ✅ NEW: Check for skipped cycles
+  const hasSkippedCycles = () => {
+    return cycles.some((c) => c.status === "skipped" || c.isSkipped);
   };
 
   const shouldShowStartNextCycle = () => {
-    if (isGroupFullyCompleted()) return false;
+    if (isTimelineFull()) return false; // Stop if duration met
 
     const hasActiveCycle = cycles.some((c) => getCycleStatus(c) === "active");
     const hasUpcomingCycle = cycles.some(
@@ -695,7 +707,7 @@ export default function CycleManagement({
   };
 
   const shouldShowStartUpcomingCycle = () => {
-    if (isGroupFullyCompleted()) return false;
+    if (isTimelineFull()) return false; // Stop if duration met
 
     const hasActiveCycle = cycles.some((c) => getCycleStatus(c) === "active");
     const hasUpcomingCycle = cycles.some(
@@ -765,7 +777,7 @@ export default function CycleManagement({
             <RefreshCw size={18} className="text-text/60" />
           </button>
           
-          {canManage && isGroupFullyCompleted() && (
+          {canManage && isTimelineFull() && !hasSkippedCycles() && (
             <button 
               onClick={handleExportSchedule}
               disabled={generatingPDF}
@@ -795,7 +807,11 @@ export default function CycleManagement({
             {stats.totalCycles}
           </div>
           <div className="text-xs sm:text-sm text-text/60">
-            {stats.activeCycles + stats.upcomingCycles} cycles remaining
+            {/* Show info about remaining or skipped */}
+            {isTimelineFull() 
+                ? (stats.skippedCycles > 0 ? `${stats.skippedCycles} skipped` : "All processed") 
+                : `${groupDuration - (stats.completedCycles + stats.skippedCycles)} remaining`
+            }
           </div>
         </div>
 
@@ -818,9 +834,17 @@ export default function CycleManagement({
             <PlayCircle size={16} className="text-accent" />
           </div>
           <div className="text-xl sm:text-2xl font-bold text-accent">
-            #{cycles.find((c) => c.status === "active")?.cycleNumber || "-"}
+            {isTimelineFull() 
+                ? (hasSkippedCycles() ? "Skipped" : "None") 
+                : `#${cycles.find((c) => c.status === "active")?.cycleNumber || "-"}`
+            }
           </div>
-          <div className="text-xs sm:text-sm text-text/60">In progress</div>
+          <div className="text-xs sm:text-sm text-text/60">
+             {isTimelineFull() 
+                ? (hasSkippedCycles() ? "Action Needed" : "Group Completed") 
+                : "In progress"
+             }
+          </div>
         </div>
 
         <div className="card p-3 sm:p-4">
@@ -1065,20 +1089,47 @@ export default function CycleManagement({
               })}
             </div>
 
-            {isGroupFullyCompleted() && (
-                <div className="mt-8 mb-4 p-8 bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500">
-                    <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
-                    <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
+            {/* ✅ BANNER LOGIC: Smart Switch between "Success" and "Warning" */}
+            {isTimelineFull() && (
+                <div className={`mt-8 mb-4 p-8 border rounded-2xl text-center shadow-sm relative overflow-hidden animate-in fade-in zoom-in duration-500 ${
+                    hasSkippedCycles() ? 'bg-amber-50 border-amber-200' : 'bg-gradient-to-br from-green-50 to-emerald-100 border-green-200'
+                }`}>
+                    
+                    {/* Background decorations */}
+                    {!hasSkippedCycles() && (
+                        <>
+                            <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-green-200 rounded-full opacity-20 blur-xl"></div>
+                            <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-emerald-300 rounded-full opacity-20 blur-xl"></div>
+                        </>
+                    )}
 
                     <div className="relative z-10 flex flex-col items-center">
                         <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-md mb-4 animate-bounce">
-                            <Trophy className="text-yellow-500 w-8 h-8" fill="currentColor" />
+                            {hasSkippedCycles() ? (
+                                <AlertTriangle className="text-amber-500 w-8 h-8" fill="currentColor" />
+                            ) : (
+                                <Trophy className="text-yellow-500 w-8 h-8" fill="currentColor" />
+                            )}
                         </div>
-                        <h3 className="text-2xl font-bold text-green-800 mb-2">Group Successfully Completed!</h3>
-                        <p className="text-green-700 max-w-md mx-auto">
-                            All {stats.totalCycles} cycles have been successfully completed and distributed.
-                            Total cycles are completed in this group. So group members cycles and payments are completed.
-                        </p>
+                        
+                        {hasSkippedCycles() ? (
+                             <>
+                                <h3 className="text-2xl font-bold text-amber-800 mb-2">Cycle Limit Reached</h3>
+                                <p className="text-amber-700 max-w-md mx-auto">
+                                    You have reached the cycle limit (2/{groupDuration}), but {stats.skippedCycles} cycle(s) were skipped.
+                                    <br/><br/>
+                                    <strong>Action Needed:</strong> Please unskip and complete the pending cycle(s) to finish the group successfully.
+                                </p>
+                             </>
+                        ) : (
+                             <>
+                                <h3 className="text-2xl font-bold text-green-800 mb-2">Group Successfully Completed!</h3>
+                                <p className="text-green-700 max-w-md mx-auto">
+                                    All {stats.totalCycles} cycles have been successfully completed and distributed.
+                                    Total cycles are completed in this group.
+                                </p>
+                             </>
+                        )}
                     </div>
                 </div>
             )}
@@ -1119,13 +1170,15 @@ export default function CycleManagement({
           </div>
         </div>
 
+        {/* Right Column - Selected Cycle Details */}
         <div className="lg:w-96 space-y-6">
           {selectedCycle ? (
             <div className="card">
               <h3 className="font-bold text-text mb-4 text-lg">
                 Cycle #{selectedCycle.cycleNumber} Details
               </h3>
-
+              
+              {/* ... (Keep existing details panel code) ... */}
               <div className="space-y-4">
                 <div>
                   <div className="text-sm text-text/60 mb-1">Recipient</div>

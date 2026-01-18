@@ -5,7 +5,7 @@ import { Filter } from 'lucide-react';
 interface Props {
   filters: { role: string; status: string; group: string; search: string };
   setFilters: React.Dispatch<React.SetStateAction<{ role: string; status: string; group: string; search: string }>>;
-  groups: { id: string; name: string }[];
+  groups: { id?: string; _id?: string; name: string }[];
 }
 
 export default function MembersFilters({ filters, setFilters, groups }: Props) {
@@ -26,11 +26,16 @@ export default function MembersFilters({ filters, setFilters, groups }: Props) {
              onChange={(e) => setFilters(prev => ({ ...prev, group: e.target.value }))}
            >
              <option value="all">All Groups</option>
-             {groups.map((group) => (
-               <option key={group.id} value={group.id}>
-                 {group.name}
-               </option>
-             ))}
+             {/* ✅ Handle both id formats safely */}
+             {groups && groups.length > 0 ? (
+               groups.map((group) => (
+                 <option key={group._id || group.id} value={group._id || group.id}>
+                   {group.name}
+                 </option>
+               ))
+             ) : (
+               <option disabled>No groups available</option>
+             )}
            </select>
         </div>
 
@@ -49,7 +54,7 @@ export default function MembersFilters({ filters, setFilters, groups }: Props) {
            </select>
         </div>
 
-        {/* Status Filter */}
+        {/* Status Filter - ✅ Removed Inactive */}
         <div>
            <label className="block text-xs md:text-sm font-semibold text-gray-700 mb-1 md:mb-2">Status</label>
            <select 
@@ -60,7 +65,6 @@ export default function MembersFilters({ filters, setFilters, groups }: Props) {
              <option value="all">All Status</option>
              <option value="active">Active</option>
              <option value="pending">Pending</option>
-             <option value="inactive">Inactive</option>
            </select>
         </div>
         

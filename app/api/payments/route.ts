@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/db/connect';
 import { Payment } from '@/lib/db/models/Payment';
+import { Group } from '@/lib/db/models/Group'; // ✅ Imported Group Model
 import { GroupMember } from '@/lib/db/models/GroupMember';
 // ✅ Import PaymentCycle to ensure schema is registered for population
 import { PaymentCycle } from '@/lib/db/models/PaymentCycle'; 
@@ -22,17 +23,19 @@ export async function GET(req: Request) {
       return await handleDownload(req, user);
     }
 
-    const myMemberships = await GroupMember.find({ userId: user._id }).populate('groupId', 'name');
+    const myMemberships = await GroupMember.find({ userId: user._id })
+      .populate('groupId', 'name status'); // ✅ Fetch Status
+    
     const myGroupIds = myMemberships.map(m => m.groupId._id || m.groupId);
 
     // ✅ FIX: Populate 'memberId' too so we can see Guest Names
     const payments = await Payment.find({ groupId: { $in: myGroupIds } })
       .populate('userId', 'name phone') // Global User Data
       .populate('memberId', 'name phone email') // Snapshot Group Data (Critical for Guests)
-      .populate('groupId', 'name')
+      .populate('groupId', 'name status') // ✅ Populate Status
       .populate({
           path: 'cycleId',
-          select: 'cycleNumber',
+          select: 'cycleNumber status isSkipped', // ✅ Fetch Skipped Status
           strictPopulate: false 
       }) 
       .sort({ createdAt: -1 });
@@ -48,22 +51,26 @@ export async function GET(req: Request) {
       if (!p.groupId) return; // Only skip if Group is missing
 
       const groupId = (p.groupId._id || p.groupId).toString();
+      const isGroupCompleted = p.groupId.status === 'completed'; // ✅ Check Completion
       
       if (!groupsMap.has(groupId)) {
         groupsMap.set(groupId, {
           groupId: groupId,
           groupName: p.groupId.name || 'Unknown Group',
           myRole: getMyRole(groupId),
+          isGroupCompleted: isGroupCompleted, // ✅ Add Flag
           cycles: new Map() 
         });
       }
 
       const groupEntry = groupsMap.get(groupId);
       const cycleKey = p.cycleId?.cycleNumber || p.cycleNumber || 1;
+      const isCycleSkipped = p.cycleId?.isSkipped || p.cycleId?.status === 'skipped'; // ✅ Check Skipped
 
       if (!groupEntry.cycles.has(cycleKey)) {
         groupEntry.cycles.set(cycleKey, {
           cycleNumber: cycleKey,
+          isSkipped: isCycleSkipped, // ✅ Add Flag
           payments: []
         });
       }
@@ -199,7 +206,7 @@ async function handleDownload(req: Request, user: any) {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
 }
 
-// --- POST: Handle Updates (No changes needed here usually, but kept for completeness) ---
+// --- POST: Handle Updates ---
 export async function POST(req: Request) {
   try {
     await dbConnect();
@@ -219,6 +226,12 @@ export async function POST(req: Request) {
     if (paymentId) {
       const payment = await Payment.findById(paymentId);
       if (!payment) return NextResponse.json({ error: 'Payment not found' }, { status: 404 });
+
+      // ✅ CHECK GROUP STATUS FIRST
+      const group = await Group.findById(payment.groupId);
+      if (group && group.status === 'completed') {
+         return NextResponse.json({ error: 'Group is completed. Payments cannot be modified.' }, { status: 400 });
+      }
 
       // Verify Leader Permission
       const membership = await GroupMember.findOne({ 
@@ -309,6 +322,12 @@ export async function DELETE(req: Request) {
 
     const payment = await Payment.findById(paymentId);
     if (!payment) return NextResponse.json({ error: 'Payment not found' }, { status: 404 });
+
+    // ✅ CHECK GROUP STATUS FIRST
+    const group = await Group.findById(payment.groupId);
+    if (group && group.status === 'completed') {
+       return NextResponse.json({ error: 'Group is completed. Payments cannot be deleted.' }, { status: 400 });
+    }
 
     const membership = await GroupMember.findOne({ 
       userId: user._id, 

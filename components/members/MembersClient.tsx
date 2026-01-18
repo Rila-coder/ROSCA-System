@@ -14,7 +14,7 @@ export default function MembersPage() {
   const [myPermissions, setMyPermissions] = useState<any[]>([]);
   const [availableGroups, setAvailableGroups] = useState<any[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>('');
-  const [currentUserName, setCurrentUserName] = useState<string>(''); // ✅ NEW STATE
+  const [currentUserName, setCurrentUserName] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
   // Filter State
@@ -31,16 +31,18 @@ export default function MembersPage() {
       const res = await fetch('/api/members');
       const data = await res.json();
       if (res.ok) {
-        setAllMembers(data.members);
-        setFilteredMembers(data.members);
-        setMyPermissions(data.myPermissions);
-        setAvailableGroups(data.myGroups || []);
+        setAllMembers(data.members || []);
+        // Initialize filtered list
+        setFilteredMembers(data.members || []);
+        setMyPermissions(data.myPermissions || []);
+        setAvailableGroups(data.myGroups || []); 
         setCurrentUserId(data.currentUserId);
-        setCurrentUserName(data.currentUserName); // ✅ STORE NAME
+        setCurrentUserName(data.currentUserName);
       } else {
         toast.error(data.error || 'Failed to fetch members');
       }
     } catch (error) {
+      console.error(error);
       toast.error('Network error');
     } finally {
       setLoading(false);
@@ -51,37 +53,66 @@ export default function MembersPage() {
     fetchData();
   }, []);
 
+  // ✅ FIXED: Strict Deep Filtering Logic
   useEffect(() => {
-    let result = [...allMembers];
+    if (!allMembers.length) return;
 
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      result = result.filter(m => 
-        m.name.toLowerCase().includes(q) || 
-        m.email.toLowerCase().includes(q) || 
-        m.phone.includes(q)
-      );
-    }
+    const query = filters.search.toLowerCase();
 
-    if (filters.role !== 'all') {
-      result = result.filter(m => m.memberships.some((ms: any) => ms.role === filters.role));
-    }
+    // We process the list to create a "clean" view for the grid
+    const processedMembers = allMembers.map(member => {
+      // 1. Check if the USER matches the search text (Name/Email/Phone)
+      const matchesSearch = 
+        (member.name && member.name.toLowerCase().includes(query)) || 
+        (member.email && member.email.toLowerCase().includes(query)) || 
+        (member.phone && member.phone.includes(query));
 
-    if (filters.status !== 'all') {
-      result = result.filter(m => m.memberships.some((ms: any) => ms.status === filters.status));
-    }
+      if (!matchesSearch) return null; // Skip this user entirely if search fails
 
-    if (filters.group !== 'all') {
-      result = result.filter(m => m.memberships.some((ms: any) => ms.groupId === filters.group));
-    }
+      // 2. Filter the user's MEMBERSHIPS (The Contexts)
+      // This is crucial: We remove Group B info if filtering for Group A
+      const validMemberships = member.memberships.filter((ms: any) => {
+        // Filter by Group ID
+        if (filters.group !== 'all') {
+          // Compare as strings to be safe
+          if (ms.groupId.toString() !== filters.group.toString()) {
+            return false;
+          }
+        }
 
-    setFilteredMembers(result);
+        // Filter by Role
+        if (filters.role !== 'all') {
+          if (ms.role !== filters.role) {
+            return false;
+          }
+        }
+
+        // Filter by Status
+        if (filters.status !== 'all') {
+          if (ms.status !== filters.status) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+
+      // If user has no valid memberships after filtering, return null
+      if (validMemberships.length === 0) return null;
+
+      // Return a new member object with ONLY the valid memberships
+      return {
+        ...member,
+        memberships: validMemberships
+      };
+    }).filter(Boolean); // Remove null entries
+
+    setFilteredMembers(processedMembers);
   }, [filters, allMembers]);
 
   return (
     <LoadingWrapper pageTitle="Members">
       <div className="space-y-4 md:space-y-6">
-        {/* ✅ PASSED THE NAME PROP */}
         <MembersHeader 
           onSearch={(val) => setFilters(prev => ({ ...prev, search: val }))} 
           onRefresh={fetchData}

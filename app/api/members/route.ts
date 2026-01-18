@@ -48,13 +48,27 @@ export async function GET(req: Request) {
     const user = await verifyAuthToken(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const myMemberships = await GroupMember.find({ userId: user._id }).populate('groupId', 'name');
+    // 1. Fetch My Memberships (to determine which groups to load)
+    const myMemberships = await GroupMember.find({ userId: user._id })
+      .populate({
+         path: 'groupId',
+         select: 'name status duration currentCycle' 
+      });
+      
     const myGroupIds = myMemberships.map(m => m.groupId._id || m.groupId);
 
+    // ✅ FIX: Create the list of groups for the filter dropdown
+    const myGroups = myMemberships.map(m => ({
+        id: m.groupId._id.toString(),
+        name: m.groupId.name || 'Unknown Group'
+    }));
+
+    // 2. Fetch All Members in those groups
     const allGroupMembers = await GroupMember.find({ groupId: { $in: myGroupIds } })
       .populate('userId', 'name email phone avatar') 
-      .populate('groupId', 'name');
+      .populate('groupId', 'name status'); 
 
+    // 3. Fetch Payments
     const payments = await Payment.find({
       groupId: { $in: myGroupIds },
       status: { $in: ['paid', 'pending', 'overdue'] }
@@ -64,11 +78,6 @@ export async function GET(req: Request) {
 
     allGroupMembers.forEach((gm: any) => {
       let uniqueKey = '';
-      
-      // Data Resolution Strategy:
-      // 1. Use Group-Specific Snapshot (gm.name) if available.
-      // 2. Fallback to Global User Profile (gm.userId.name) if snapshot is missing.
-      // 3. Fallback to 'Unknown'/'N/A'.
       
       const displayName = gm.name || (gm.userId ? gm.userId.name : 'Guest Member');
       const displayEmail = gm.email || (gm.userId ? gm.userId.email : 'N/A');
@@ -95,6 +104,9 @@ export async function GET(req: Request) {
         });
       }
 
+      const groupStatus = gm.groupId?.status;
+      const isCompleted = groupStatus === 'completed';
+
       const member = membersMap.get(uniqueKey);
       member.memberships.push({
         groupId: gm.groupId._id.toString(),
@@ -102,23 +114,16 @@ export async function GET(req: Request) {
         role: gm.role,
         status: gm.status,
         membershipId: gm._id.toString(),
-        // Pass snapshot data explicitly for editing forms
         snapshotName: gm.name,
         snapshotEmail: gm.email,
         snapshotPhone: gm.phone,
-        groupContext: { role: gm.role } 
+        groupContext: { role: gm.role },
+        isGroupCompleted: isCompleted 
       });
     });
 
     // Aggregate Payments
     payments.forEach((p: any) => {
-      // Try mapping via MemberID first (more accurate)
-      if (p.memberId) {
-         // Find which user/guest owns this memberId
-         // (In a real app, you'd map memberId -> userId, but here we simplify based on your existing structure)
-      }
-      
-      // Fallback: Map via UserID
       if (p.userId) {
          const targetId = p.userId.toString();
          if (membersMap.has(targetId)) {
@@ -133,7 +138,13 @@ export async function GET(req: Request) {
       members: Array.from(membersMap.values()),
       currentUserId: user._id.toString(),
       currentUserName: user.name,
-      myPermissions: myMemberships.map(m => ({ groupId: m.groupId._id.toString(), role: m.role }))
+      // ✅ Return the groups list for the filter
+      myGroups: myGroups, 
+      myPermissions: myMemberships.map(m => ({ 
+          groupId: m.groupId._id.toString(), 
+          role: m.role,
+          isGroupCompleted: m.groupId.status === 'completed'
+      }))
     });
 
   } catch (error) {
@@ -156,6 +167,14 @@ export async function PUT(req: Request) {
 
     if (!userId || !groupId) return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
 
+    // Check Group Status
+    const group = await Group.findById(groupId);
+    if (!group) return NextResponse.json({ error: 'Group not found' }, { status: 404 });
+    
+    if (group.status === 'completed') {
+        return NextResponse.json({ error: 'Group is completed. Cannot edit members.' }, { status: 400 });
+    }
+
     const myMembership = await GroupMember.findOne({ userId: currentUser._id, groupId });
     if (!myMembership || !['leader', 'sub_leader'].includes(myMembership.role)) {
       return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
@@ -164,22 +183,15 @@ export async function PUT(req: Request) {
     let targetMembership;
     const userIdStr = userId.toString();
 
-    // Handle Guest vs Registered ID lookup
     if (userIdStr.startsWith('guest-')) {
         const realGroupMemberId = userIdStr.replace('guest-', '');
         targetMembership = await GroupMember.findOne({ _id: realGroupMemberId, groupId }).populate('groupId');
     } else {
         targetMembership = await GroupMember.findOne({ userId: userId, groupId }).populate('groupId');
-        if (!targetMembership) {
-             try {
-                targetMembership = await GroupMember.findOne({ _id: userId, groupId }).populate('groupId');
-             } catch (e) {}
-        }
     }
 
     if (!targetMembership) return NextResponse.json({ error: 'Member not found' }, { status: 404 });
 
-    // Permission checks
     if (myMembership.role === 'sub_leader' && targetMembership.role === 'leader') {
       return NextResponse.json({ error: 'Sub-leaders cannot edit the Leader' }, { status: 403 });
     }
@@ -187,12 +199,10 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'Only a Leader can promote someone to Leader' }, { status: 403 });
     }
 
-    // ✅ UPDATE LOGIC: Update the GroupMember Snapshot fields
     if (name) targetMembership.name = name;
     if (phone) targetMembership.phone = phone;
     if (email) targetMembership.email = email.toLowerCase().trim();
     
-    // Legacy support for non-registered
     if (!targetMembership.userId) {
       targetMembership.pendingMemberDetails = {
         ...targetMembership.pendingMemberDetails,
@@ -202,15 +212,13 @@ export async function PUT(req: Request) {
       };
     }
 
-    // Role updates
     const oldRole = targetMembership.role;
     if (role && role !== oldRole) {
        if (role === 'sub_leader') {
-          const existingSub = await GroupMember.findOne({ groupId, role: 'sub_leader', _id: { $ne: targetMembership._id } });
-          if (existingSub) return NextResponse.json({ error: 'Group already has a Sub-leader' }, { status: 400 });
+         const existingSub = await GroupMember.findOne({ groupId, role: 'sub_leader', _id: { $ne: targetMembership._id } });
+         if (existingSub) return NextResponse.json({ error: 'Group already has a Sub-leader' }, { status: 400 });
        }
        
-       // Notifications logic...
        try {
            const groupName = targetMembership.groupId?.name || 'the group';
            if (targetMembership.userId) {
@@ -252,6 +260,13 @@ export async function DELETE(req: Request) {
     const groupId = searchParams.get('groupId');
 
     if (!targetUserId || !groupId) return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
+
+    const group = await Group.findById(groupId);
+    if (!group) return NextResponse.json({ error: 'Group not found' }, { status: 404 });
+    
+    if (group.status === 'completed') {
+        return NextResponse.json({ error: 'Group is completed. Cannot remove members.' }, { status: 400 });
+    }
 
     const myMembership = await GroupMember.findOne({ userId: currentUser._id, groupId });
     if (!myMembership || !['leader', 'sub_leader'].includes(myMembership.role)) {

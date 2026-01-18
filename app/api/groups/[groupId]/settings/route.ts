@@ -3,7 +3,8 @@ import { getServerSession } from "@/lib/utils/auth";
 import connectDB from "@/lib/db/connect";
 import { Group } from "@/lib/db/models/Group";
 import { GroupSettings } from "@/lib/db/models/GroupSettings";
-import { GroupMember } from "@/lib/db/models/GroupMember"; // ✅ Added Import
+import { GroupMember } from "@/lib/db/models/GroupMember"; 
+import { PaymentCycle } from "@/lib/db/models/PaymentCycle"; // ✅ Added to check cycles
 import { User } from "@/lib/db/models/User";
 import {
   sendNotificationToAllMembers,
@@ -38,8 +39,15 @@ export async function GET(
     // ✅ NEW: Count current active members
     const currentMemberCount = await GroupMember.countDocuments({
       groupId,
-      status: { $in: ['active', 'pending'] } // We count active and pending as "occupied spots"
+      status: { $in: ['active', 'pending'] } 
     });
+
+    // ✅ NEW: Check if cycles have started
+    const cyclesStarted = await PaymentCycle.countDocuments({ groupId });
+    const hasStarted = cyclesStarted > 0;
+
+    // ✅ NEW: Check if group is completed
+    const isCompleted = group.status === 'completed';
 
     // Fetch or Init settings
     let settings = await GroupSettings.findOne({ groupId });
@@ -56,7 +64,9 @@ export async function GET(
 
     return NextResponse.json({ 
       settings,
-      currentMemberCount // ✅ Send this to frontend
+      currentMemberCount,
+      hasStarted, // ✅ Send flag to frontend
+      isCompleted // ✅ Send flag to frontend
     });
   } catch (error) {
     console.error("Error fetching settings:", error);
@@ -92,6 +102,26 @@ export async function PUT(
         { status: 403 }
       );
 
+    // ✅ SECURITY: Block updates if group is completed
+    if (group.status === 'completed') {
+        return NextResponse.json(
+            { error: "Group is completed. Settings cannot be changed." },
+            { status: 400 }
+        );
+    }
+
+    // ✅ VALIDATION: Check Cycles Started
+    const cyclesStarted = await PaymentCycle.countDocuments({ groupId });
+    if (cyclesStarted > 0) {
+        // Prevent changing amount or frequency if cycles exist
+        if (data.contributionAmount !== undefined && data.contributionAmount !== group.contributionAmount) {
+            return NextResponse.json({ error: "Cannot change Contribution Amount after cycles have started." }, { status: 400 });
+        }
+        if (data.frequency !== undefined && data.frequency !== group.frequency) {
+            return NextResponse.json({ error: "Cannot change Frequency after cycles have started." }, { status: 400 });
+        }
+    }
+
     // ✅ VALIDATION: Check Max Members Limit
     if (data.maxMembers !== undefined) {
       const currentCount = await GroupMember.countDocuments({
@@ -111,8 +141,6 @@ export async function PUT(
 
     // Track changes for notifications
     const oldGroupName = group.name;
-    const oldContributionAmount = group.contributionAmount;
-    const oldFrequency = group.frequency;
     const changes = [];
 
     // 1. Update Settings Document
@@ -146,23 +174,26 @@ export async function PUT(
       changes.push("Group description updated");
     }
 
-    if (
-      data.contributionAmount &&
-      data.contributionAmount !== group.contributionAmount
-    ) {
-      group.contributionAmount = data.contributionAmount;
-      groupUpdated = true;
-      changes.push(
-        `Contribution amount changed from ₹${oldContributionAmount} to ₹${data.contributionAmount}`
-      );
-    }
+    // Only update amount/freq if NO cycles started
+    if (cyclesStarted === 0) {
+        if (
+          data.contributionAmount &&
+          data.contributionAmount !== group.contributionAmount
+        ) {
+          group.contributionAmount = data.contributionAmount;
+          groupUpdated = true;
+          changes.push(
+            `Contribution amount changed to ₹${data.contributionAmount}`
+          );
+        }
 
-    if (data.frequency && data.frequency !== group.frequency) {
-      group.frequency = data.frequency;
-      groupUpdated = true;
-      changes.push(
-        `Payment frequency changed from ${oldFrequency} to ${data.frequency}`
-      );
+        if (data.frequency && data.frequency !== group.frequency) {
+          group.frequency = data.frequency;
+          groupUpdated = true;
+          changes.push(
+            `Payment frequency changed to ${data.frequency}`
+          );
+        }
     }
 
     if (groupUpdated) {

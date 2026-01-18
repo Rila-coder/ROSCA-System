@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { 
   User, Phone, Crown, Shield, Mail,
   Grid, List,
-  Save, Trash2, Edit, Clock, Users
+  Save, Trash2, Edit, Clock, Users,
+  CheckCircle // ✅ Imported CheckCircle for success banner
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -93,51 +94,59 @@ export default function MembersGrid({
     groupId: '' 
   });
 
-  // ✅ FIXED: Find my role in a SPECIFIC group
   const getMyRoleInGroup = (groupId: string) => {
     const permission = myPermissions.find(p => p.groupId === groupId);
-    return permission?.role; // 'leader', 'sub_leader', or 'member'
+    return permission?.role;
   };
 
-  // ✅ FIXED: Check if I can edit a member in a SPECIFIC group
+  // ✅ NEW: Check if group is completed (Locked)
+  const isGroupLocked = (groupId: string) => {
+     // Find any member record for this group and check the isGroupCompleted flag
+     const memberInGroup = members.find(m => 
+        m.memberships.some((ms: any) => ms.groupId === groupId)
+     );
+     if (!memberInGroup) return false;
+     
+     const membership = memberInGroup.memberships.find((ms: any) => ms.groupId === groupId);
+     return membership?.isGroupCompleted || false;
+  };
+
   const canEditMember = (member: any, groupId: string) => {
+    // ✅ 1. Locked Check: If group completed, NO ONE edits.
+    if (isGroupLocked(groupId)) return false;
+
     const myRole = getMyRoleInGroup(groupId);
     const targetRole = member.roleInGroup || member.groupContext?.role;
     
     if (!myRole) return false;
     
-    // 1. Members cannot edit anyone (not even themselves in this view)
     if (myRole === 'member') return false;
 
-    // 2. Leaders can edit everyone in their group
     if (myRole === 'leader') return true;
 
-    // 3. Sub-leaders can edit themselves and regular members (not other sub-leaders or leaders)
     if (myRole === 'sub_leader') {
-      // Cannot edit Leader
       if (targetRole === 'leader') return false;
-      // Can edit themselves AND regular members
       return member.id === currentUserId || targetRole === 'member';
     }
 
     return false;
   };
 
-  // ✅ FIXED: Check if I can delete a member in a SPECIFIC group
   const canDeleteMember = (member: any, groupId: string) => {
-    if (member.id === currentUserId) return false; // Cannot delete self
+    if (member.id === currentUserId) return false; 
+    
+    // ✅ 1. Locked Check
+    if (isGroupLocked(groupId)) return false;
     
     const myRole = getMyRoleInGroup(groupId);
     const targetRole = member.roleInGroup || member.groupContext?.role;
     
     if (!myRole) return false;
 
-    // Leader can delete anyone except themselves and other leaders
     if (myRole === 'leader') {
       return targetRole !== 'leader' && member.id !== currentUserId;
     }
 
-    // Sub-leader can only delete regular members (not themselves, not other sub-leaders, not leaders)
     if (myRole === 'sub_leader') {
       return targetRole === 'member' && member.id !== currentUserId;
     }
@@ -145,14 +154,15 @@ export default function MembersGrid({
     return false;
   };
 
-  // ✅ FIXED: Check if I can change role of a member in a SPECIFIC group
   const canChangeRole = (member: any, groupId: string) => {
+    // ✅ 1. Locked Check
+    if (isGroupLocked(groupId)) return false;
+
     const myRole = getMyRoleInGroup(groupId);
     const targetRole = member.roleInGroup || member.groupContext?.role;
     
     if (!myRole) return false;
 
-    // Only leader can change roles, and cannot change themselves or other leaders
     return (
       myRole === 'leader' &&
       member.id !== currentUserId &&
@@ -160,8 +170,10 @@ export default function MembersGrid({
     );
   };
 
-  // ✅ FIXED: Check if I have ANY action for this member in this group
   const hasAnyAction = (member: any, groupId: string) => {
+    // ✅ Quick return if locked
+    if (isGroupLocked(groupId)) return false;
+
     return (
       canEditMember(member, groupId) ||
       canDeleteMember(member, groupId) ||
@@ -169,7 +181,13 @@ export default function MembersGrid({
     );
   };
 
-  // ✅ CRITICAL FIX: Grouping Logic with Snapshot Data
+  // ✅ NEW: Check if user can see action messages (leader or sub-leader only)
+  const canSeeActionMessages = (groupId: string) => {
+    const myRole = getMyRoleInGroup(groupId);
+    return myRole === 'leader' || myRole === 'sub_leader';
+  };
+
+  // Grouping Logic with Snapshot Data
   const groupMembersByGroup = () => {
     const groupsMap = new Map();
     members.forEach(member => {
@@ -178,12 +196,12 @@ export default function MembersGrid({
           groupsMap.set(membership.groupId, {
             id: membership.groupId,
             name: membership.groupName,
+            isCompleted: membership.isGroupCompleted, // ✅ Capture status
             members: []
           });
         }
         groupsMap.get(membership.groupId).members.push({
           ...member,
-          // ✅ CRITICAL: Use snapshot data for this specific group
           name: membership.snapshotName || member.name,
           email: membership.snapshotEmail || member.email,
           phone: membership.snapshotPhone || member.phone,
@@ -246,7 +264,6 @@ export default function MembersGrid({
           groupId: editForm.groupId,
           name: editForm.name,
           phone: editForm.phone,
-          // Only send role if it's different
           ...(editForm.role !== (editingMember.roleInGroup || editingMember.groupContext?.role) && {
             role: editForm.role
           })
@@ -270,7 +287,7 @@ export default function MembersGrid({
       Loading members data...
     </div>
   );
-   
+    
   if (members.length === 0) return (
     <div className="py-8 md:py-10 text-center text-gray-500">
       No members found.
@@ -304,7 +321,9 @@ export default function MembersGrid({
 
         {groupedData.map((group) => {
           const myRoleInThisGroup = getMyRoleInGroup(group.id);
-          
+          const isCompleted = group.isCompleted; // ✅ Get completion status
+          const showActionMessages = canSeeActionMessages(group.id); // ✅ Check if user can see messages
+
           return (
           <div key={group.id} className="card bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-100">
             
@@ -319,18 +338,39 @@ export default function MembersGrid({
                   <p className="text-xs text-gray-500">{group.members.length} Members</p>
                 </div>
               </div>
-              {myRoleInThisGroup && (
-                <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  myRoleInThisGroup === 'leader' 
-                    ? 'bg-amber-100 text-amber-800' 
-                    : myRoleInThisGroup === 'sub_leader'
-                    ? 'bg-blue-100 text-blue-800'
-                    : 'bg-gray-100 text-gray-600'
-                }`}>
-                  {myRoleInThisGroup.replace('_', ' ')}
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                  {/* ✅ Show Completed Badge */}
+                  {isCompleted && (
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 flex items-center gap-1 border border-green-200">
+                          <CheckCircle size={12} />
+                          Completed
+                      </span>
+                  )}
+                  {myRoleInThisGroup && (
+                    <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                      myRoleInThisGroup === 'leader' 
+                        ? 'bg-amber-100 text-amber-800' 
+                        : myRoleInThisGroup === 'sub_leader'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {myRoleInThisGroup.replace('_', ' ')}
+                    </div>
+                  )}
+              </div>
             </div>
+            
+            {/* ✅ SHOW BANNER IF COMPLETED - Only for leaders and sub-leaders */}
+            {isCompleted && showActionMessages && (
+                <div className="mb-6 p-4 bg-green-50 border border-green-100 rounded-lg text-center">
+                    <p className="text-green-800 font-medium text-sm">
+                        Total cycles of this group are completed.
+                    </p>
+                    <p className="text-green-600 text-xs mt-1">
+                        Editing or removing members is disabled.
+                    </p>
+                </div>
+            )}
 
             {viewMode === 'grid' ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
@@ -400,14 +440,26 @@ export default function MembersGrid({
                     </div>
 
                     <div className="pt-2 md:pt-3 border-t flex gap-1.5 md:gap-2 mt-auto">
-                      <a 
-                        href={`tel:${member.phone}`} 
-                        className="flex-1 py-1.5 md:py-2 bg-gray-50 text-gray-700 rounded-lg text-xs md:text-sm font-medium hover:bg-green-50 hover:text-green-700 flex items-center justify-center gap-1 md:gap-2 transition-colors"
-                      >
-                        <Phone size={12} className="md:size-3.5" /> 
-                        <span className="hidden xs:inline">Call</span>
-                      </a>
+                      {/* ✅ Hide call button for ALL members in completed groups */}
+                      {!isCompleted && (
+                        <a 
+                          href={`tel:${member.phone}`} 
+                          className="flex-1 py-1.5 md:py-2 bg-gray-50 text-gray-700 rounded-lg text-xs md:text-sm font-medium hover:bg-green-50 hover:text-green-700 flex items-center justify-center gap-1 md:gap-2 transition-colors"
+                        >
+                          <Phone size={12} className="md:size-3.5" /> 
+                          <span className="hidden xs:inline">Call</span>
+                        </a>
+                      )}
                       
+                      {/* ✅ If group is completed, show disabled state */}
+                      {isCompleted ? (
+                        <div className="flex-1 py-1.5 md:py-2 bg-gray-100 text-gray-500 rounded-lg text-xs md:text-sm font-medium flex items-center justify-center gap-1 md:gap-2 cursor-not-allowed">
+                          <Phone size={12} className="md:size-3.5 text-gray-400" /> 
+                          <span className="hidden xs:inline">Call</span>
+                        </div>
+                      ) : null}
+                      
+                      {/* ✅ Only show delete button if NOT completed and perm allowed */}
                       {canDeleteMember(member, group.id) && (
                           <button 
                             onClick={() => handleDelete(member, group.id)} 
@@ -482,6 +534,17 @@ export default function MembersGrid({
                         </td>
                         <td className="py-2 md:py-3 px-2 md:px-3 text-right">
                           <div className="flex justify-end gap-1 md:gap-2">
+                            {/* ✅ Hide call button in list view for completed groups */}
+                            {!isCompleted && (
+                              <a 
+                                href={`tel:${member.phone}`} 
+                                className="p-1.5 md:p-2 text-gray-400 hover:text-green-600 bg-gray-50 rounded-lg flex items-center"
+                                title="Call member"
+                              >
+                                <Phone size={14} className="md:size-4" />
+                              </a>
+                            )}
+                            
                             {canEditMember(member, group.id) && (
                               <button 
                                 onClick={() => handleEditClick(member, group.id)} 
