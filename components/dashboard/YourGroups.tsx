@@ -1,5 +1,20 @@
+'use client';
+
 import Link from 'next/link';
-import { Users, ArrowRight, Loader2, RefreshCw, Calendar, Clock, AlertCircle, CheckCircle, Trophy } from 'lucide-react';
+import { 
+  Users, 
+  ArrowRight, 
+  Loader2, 
+  RefreshCw, 
+  Calendar, 
+  Clock, 
+  AlertCircle, 
+  CheckCircle, 
+  Trophy, 
+  DollarSign,
+  AlertTriangle, // ✅ Imported for skipped warning
+  XCircle
+} from 'lucide-react';
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 
@@ -8,6 +23,7 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
   const [groupProgressData, setGroupProgressData] = useState<Record<string, {
     progress: number;
     completedCycles: number;
+    skippedCycles: number; // ✅ Track skipped cycles
     nextDraw: string;
     isLoading: boolean;
   }>>({});
@@ -51,41 +67,50 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
     return null;
   };
 
-  // Calculate real progress based on cycle data
+  // ✅ FIXED: Calculate real progress based on STRICT completion
   const calculateRealProgress = (group: any, cycles: any[] = []) => {
     const duration = group.duration || 1;
-    let completedCycles = 0;
-    let progress = 0;
+    let completedCount = 0;
+    let skippedCount = 0;
     
-    // If group is completed, force 100%
-    if (group.status === 'completed') {
-      completedCycles = duration;
-      progress = 100;
-    } else if (cycles.length > 0) {
-      // Count completed/skipped cycles from actual cycle data
-      completedCycles = cycles.filter((c: any) => 
-        c.status === 'completed' || c.status === 'skipped' || c.isCompleted || c.isSkipped
+    if (cycles.length > 0) {
+      // Count specific statuses
+      completedCount = cycles.filter((c: any) => 
+        c.status === 'completed' || c.isCompleted === true
       ).length;
-      
-      // Calculate progress percentage
-      progress = Math.round((completedCycles / duration) * 100);
+      skippedCount = cycles.filter((c: any) => 
+        c.status === 'skipped' || c.isSkipped === true
+      ).length;
     } else {
-      // Fallback to backend data if no cycle data
-      completedCycles = group.completedCyclesCount || (group.currentCycle > 0 ? group.currentCycle - 1 : 0);
-      progress = Math.round((completedCycles / duration) * 100);
+      // Fallback if API hasn't loaded yet
+      if (group.status === 'completed') {
+         // Default assumption, though accurate loading fixes this
+         completedCount = duration; 
+      } else {
+         completedCount = group.completedCyclesCount || (group.currentCycle > 0 ? group.currentCycle - 1 : 0);
+      }
     }
+    
+    // ✅ Progress is % of COMPLETED cycles only. Skipped does not add to progress bar.
+    let progress = Math.round((completedCount / duration) * 100);
     
     // Ensure bounds
     progress = Math.min(100, Math.max(0, progress));
-    completedCycles = Math.min(duration, Math.max(0, completedCycles));
     
-    return { progress, completedCycles };
+    return { progress, completedCycles: completedCount, skippedCycles: skippedCount };
   };
 
-  // Calculate next draw info
-  const calculateNextDraw = (group: any, completedCycles: number) => {
-    if (group.status === "completed") {
-      return "Completed";
+  // ✅ FIXED: Calculate next draw info with Skip Awareness
+  const calculateNextDraw = (group: any, completedCycles: number, skippedCycles: number) => {
+    const duration = group.duration || 1;
+    const totalProcessed = completedCycles + skippedCycles;
+
+    // Check if timeline is finished
+    if (group.status === "completed" || totalProcessed >= duration) {
+       if (skippedCycles > 0) {
+          return "Action Needed"; // ⚠️ Warning if skipped
+       }
+       return "All Cycles Done"; // 🏆 Success if clean
     }
     
     if (group.status !== "active" || !group.startDate) {
@@ -99,12 +124,7 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
         frequency === "daily" ? 1 : 
         frequency === "weekly" ? 7 : 30;
       
-      const nextCycleNumber = completedCycles + 1;
-      
-      // If all cycles are done
-      if (nextCycleNumber > (group.duration || 1)) {
-        return "All Cycles Done";
-      }
+      const nextCycleNumber = totalProcessed + 1;
       
       // Calculate next cycle date
       const daysToNextCycle = frequencyDays * nextCycleNumber;
@@ -138,8 +158,9 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
     // Initialize with loading state
     groupsList.forEach(group => {
       progressData[group._id] = {
-        progress: group.progress || 0,
+        progress: 0,
         completedCycles: 0,
+        skippedCycles: 0,
         nextDraw: "Loading...",
         isLoading: true
       };
@@ -151,14 +172,15 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
     const fetchPromises = groupsList.map(async (group) => {
       try {
         const cycles = await fetchGroupCycleData(group._id);
-        const { progress, completedCycles } = calculateRealProgress(group, cycles);
-        const nextDraw = calculateNextDraw(group, completedCycles);
+        const { progress, completedCycles, skippedCycles } = calculateRealProgress(group, cycles);
+        const nextDraw = calculateNextDraw(group, completedCycles, skippedCycles);
         
         return {
           groupId: group._id,
           data: {
             progress,
             completedCycles,
+            skippedCycles,
             nextDraw,
             isLoading: false
           }
@@ -167,14 +189,15 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
         console.error(`Error loading progress for group ${group._id}:`, error);
         
         // Fallback to static calculation
-        const { progress, completedCycles } = calculateRealProgress(group, []);
-        const nextDraw = calculateNextDraw(group, completedCycles);
+        const { progress, completedCycles, skippedCycles } = calculateRealProgress(group, []);
+        const nextDraw = calculateNextDraw(group, completedCycles, skippedCycles);
         
         return {
           groupId: group._id,
           data: {
             progress,
             completedCycles,
+            skippedCycles,
             nextDraw,
             isLoading: false
           }
@@ -210,25 +233,19 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
     
     try {
       const cycles = await fetchGroupCycleData(groupId);
-      const { progress, completedCycles } = calculateRealProgress(group, cycles);
-      const nextDraw = calculateNextDraw(group, completedCycles);
+      const { progress, completedCycles, skippedCycles } = calculateRealProgress(group, cycles);
+      const nextDraw = calculateNextDraw(group, completedCycles, skippedCycles);
       
       setGroupProgressData(prev => ({
         ...prev,
         [groupId]: {
           progress,
           completedCycles,
+          skippedCycles,
           nextDraw,
           isLoading: false
         }
       }));
-      
-      // Also update the group in the main list
-      setGroups(prev => prev.map(g => 
-        g._id === groupId 
-          ? { ...g, progress, currentCycle: completedCycles + 1 }
-          : g
-      ));
       
       toast.success(`Updated ${group.name} progress`);
     } catch (error) {
@@ -267,14 +284,15 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
     return 'bg-gray-100 text-gray-600';
   };
 
-  // Get next draw icon
+  // ✅ Updated Icon Logic
   const getNextDrawIcon = (nextDraw: string) => {
-    if (nextDraw === 'Completed' || nextDraw === 'All Cycles Done') {
-      return <Trophy size={12} className="text-emerald-500" />;
-    }
-    if (nextDraw === 'Today') {
-      return <AlertCircle size={12} className="text-red-500" />;
-    }
+    if (nextDraw === 'All Cycles Done') return <Trophy size={12} className="text-emerald-500" />;
+    if (nextDraw === 'Action Needed') return <AlertTriangle size={12} className="text-amber-500" />;
+    if (nextDraw === 'Completed') return <Trophy size={12} className="text-emerald-500" />;
+    
+    if (nextDraw === 'Today') return <AlertCircle size={12} className="text-red-500" />;
+    if (nextDraw === 'Overdue') return <XCircle size={12} className="text-red-500" />;
+    
     if (nextDraw.includes('day')) {
       const days = parseInt(nextDraw);
       if (days > 7) return <Calendar size={12} className="text-green-500" />;
@@ -284,21 +302,21 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
     return <Calendar size={12} className="text-gray-400" />;
   };
 
-  // Get next draw color
+  // ✅ Updated Color Logic
   const getNextDrawColor = (nextDraw: string) => {
-    if (nextDraw === 'Completed' || nextDraw === 'All Cycles Done') {
-      return 'text-emerald-600';
-    }
-    if (nextDraw === 'Today') {
-      return 'text-red-600 font-bold';
-    }
+    if (nextDraw === 'All Cycles Done') return 'text-emerald-600 font-medium';
+    if (nextDraw === 'Action Needed') return 'text-amber-600 font-bold';
+    if (nextDraw === 'Completed') return 'text-emerald-600 font-medium';
+    
+    if (nextDraw === 'Today') return 'text-red-600 font-bold';
+    if (nextDraw === 'Overdue') return 'text-red-600 font-bold';
+    
     if (nextDraw.includes('day')) {
       const days = parseInt(nextDraw);
       if (days > 7) return 'text-green-600';
       if (days > 3) return 'text-yellow-600';
       return 'text-orange-600';
     }
-    if (nextDraw === 'Overdue') return 'text-red-600 font-bold';
     return 'text-gray-600';
   };
 
@@ -314,18 +332,24 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
       <div className="space-y-4">
         {groups.map((group) => {
           const progressData = groupProgressData[group._id] || {
-            progress: group.progress || 0,
-            completedCycles: group.completedCyclesCount || (group.currentCycle > 0 ? group.currentCycle - 1 : 0),
+            progress: 0,
+            completedCycles: 0,
+            skippedCycles: 0,
             nextDraw: "Loading...",
             isLoading: true
           };
 
-          const isCompleted = group.status === 'completed';
-          const currentCycleDisplay = isCompleted 
-            ? group.duration || 0
-            : progressData.completedCycles + 1;
-          
           const duration = group.duration || 1;
+          
+          // Current cycle display: (Completed + Skipped + 1), capped at duration
+          const currentCycleDisplay = Math.min(
+             duration, 
+             progressData.completedCycles + progressData.skippedCycles + (progressData.nextDraw.includes('Done') || progressData.nextDraw.includes('Action') ? 0 : 1)
+          );
+          
+          const isCompleted = group.status === 'completed';
+          // Perfectly done only if ALL completed AND NO skips
+          const isPerfectlyDone = isCompleted && progressData.skippedCycles === 0;
 
           return (
             <Link key={group._id} href={`/groups/${group._id}`} className="block">
@@ -375,15 +399,22 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
                   <div className="space-y-1">
                     <div className="flex justify-between items-center">
                       <span className="text-xs font-semibold text-primary">
-                        {isCompleted ? (
+                        {/* Status Text based on condition */}
+                        {isPerfectlyDone ? (
                           <span className="flex items-center gap-1 text-emerald-600">
                             <Trophy size={10} />
                             All Cycles Completed
                           </span>
+                        ) : progressData.skippedCycles > 0 && currentCycleDisplay === duration ? (
+                           <span className="flex items-center gap-1 text-amber-600">
+                             <AlertTriangle size={10} />
+                             Cycle Limit Reached
+                           </span>
                         ) : (
                           `Cycle ${currentCycleDisplay}/${duration}`
                         )}
                       </span>
+                      
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-primary">
                           {progressData.isLoading ? (
@@ -392,14 +423,14 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
                             `${progressData.progress}%`
                           )}
                         </span>
-                        {!isCompleted && (
-                          <div className="flex items-center gap-1 bg-gray-50 px-2 py-0.5 rounded text-[10px]">
+                        
+                        {/* Next Draw Badge */}
+                        <div className="flex items-center gap-1 bg-gray-50 px-2 py-0.5 rounded text-[10px]">
                             {getNextDrawIcon(progressData.nextDraw)}
                             <span className={getNextDrawColor(progressData.nextDraw)}>
                               {progressData.nextDraw}
                             </span>
-                          </div>
-                        )}
+                        </div>
                       </div>
                     </div>
                     
@@ -411,7 +442,11 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
                         <div 
                           style={{ width: `${progressData.progress}%` }} 
                           className={`shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center transition-all duration-500 ${
-                            isCompleted ? 'bg-emerald-500' : 'bg-primary'
+                            isPerfectlyDone 
+                                ? 'bg-emerald-500' 
+                                : (progressData.skippedCycles > 0 && progressData.progress < 100 && currentCycleDisplay === duration)
+                                ? 'bg-amber-500' // Amber bar if finished with skips
+                                : 'bg-primary'
                           }`}
                         ></div>
                       </div>
@@ -430,7 +465,12 @@ export default function YourGroups({ groups: initialGroups }: { groups: any[] })
                         }
                       </span>
                       <span className={`font-medium ${isCompleted ? 'text-emerald-600' : 'text-gray-700'}`}>
-                        {isCompleted ? 'Successfully Ended' : `${duration - currentCycleDisplay} cycles left`}
+                        {isPerfectlyDone 
+                            ? 'Successfully Ended' 
+                            : progressData.skippedCycles > 0 && currentCycleDisplay === duration 
+                            ? 'Action Needed (Skips)' 
+                            : `${duration - currentCycleDisplay} cycles left`
+                        }
                       </span>
                     </div>
                   </div>
